@@ -1,0 +1,14 @@
+[project]
+name = "kps-analyze-demo"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.124.4",
+    "numpy>=1.24.4",
+    "onnxruntime>=1.16.0,<1.20",
+    "opencv-python>=4.8.0",
+    "uvicorn>=0.27.0",
+    "wsproto>=1.2.0",
+]
