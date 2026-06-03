@@ -1,0 +1,74 @@
+from __future__ import annotations
+from collections import deque
+from .kp2d_extractor import RTMPosse2DExtractor
+from .kp3d_reconstructor import MHFormer3DReconstructor
+from .renderer import H36MKeypointsRenderer
+from .converter import DataConverter
+from .pose_judger import judge_pose
+import numpy as np
+import logging
+
+logger = logging.getLogger("core")
+
+
+class FrameAnalyzer:
+    def __init__(self):
+        self._kp2d_coco17_extractor = RTMPosse2DExtractor()
+        self._kp3d_reconstructor = MHFormer3DReconstructor()
+        # 用于存储历史帧的骨骼数据，供 MHFormer 重建 3D 骨骼时作为临近帧使用。
+        # 实际只需要 176 帧，不过多的一点消耗影响不大，保持数值一致性更容易理解意图
+        self._frame_buffer = deque[np.ndarray](maxlen=351)
+
+    def analyze_frame(self, frame: np.ndarray, pose_type: str) -> tuple[np.ndarray, tuple[str]]:
+        """
+        对输入帧进行分析处理。
+
+        Args:
+            frame: BGR 图像，shape=(H, W, 3)，dtype=uint8，值域 [0, 255]。
+                由 IRgbVideoSource.get_frame() 返回。
+            frame_index: 当前帧序号，用于从预加载的骨骼数据中取对应帧。
+
+        Returns:
+            处理后的图像，shape=(H, W, 3)，dtype=uint8。
+            输出将经 cv2.imencode 压缩为 JPEG 后推送至前端。
+        """
+
+        # 分析过程
+        # 1. 使用 RTMPose 从帧中提取 2D 骨骼点，输出为 H36M 格式
+        # 2. 使用 MHFormer 重建出 3D 骨骼点
+        # 3. 根据 3D 骨骼点计算出需要告警的关键点
+        # 4. 将 3D 骨骼得出的关键点部位反向映射到 2D 骨骼点上，得到需要告警的 2D 骨骼点索引列表
+        # 5. 绘制 2D 骨骼连线到帧上，告警点及其关联骨骼使用高亮颜色，作为返回结果
+        kp2d_coco17 = self._kp2d_coco17_extractor.extract(frame)  # out: (17, 3)，COCO17 格式
+        kp2d_h36m = DataConverter.coco17_to_h36m(kp2d_coco17)  # out: (17, 2)，H36M 格式
+        self._frame_buffer.append(kp2d_h36m)
+
+        kps_3d = self._kp3d_reconstructor.reconstruct(
+            np.stack(list(self._frame_buffer)),
+            frame_index=-1,
+        )  # out: (17, 3)，取当前帧（-1）的 3D 重建结果
+
+        violated_rule_id_set, affected_keypoints = judge_pose(
+            kps_3d,
+            self._get_rule(pose_type),
+        )  # TODO: 根据规则判断姿势，得到告警点索引列表
+
+        # TODO: 反向映射 3D 骨骼点索引到 2D 骨骼点索引，得到需要告警的 2D 骨骼点索引列表
+        alert_kps_2d = [11, 12, 13]  # TODO: 替换为反向映射的骨骼节点
+
+        # 渲染结果
+        rendered_frame = H36MKeypointsRenderer.render_on_frame(frame, kp2d_h36m, alert_kps_2d)
+
+        return rendered_frame, violated_rule_id_set
+
+    def _get_rule(self, pose_type: str) -> dict:
+        """
+        根据 pose_type 获取对应的姿势判定规则。
+
+        Args:
+            pose_type: 姿势类型字符串，如 "深蹲" 等。
+
+        Returns:
+            对应 pose_type 的规则字典，结构自定。
+        """
+        raise NotImplementedError
