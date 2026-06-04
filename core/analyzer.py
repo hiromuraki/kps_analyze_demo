@@ -1,25 +1,25 @@
 from __future__ import annotations
 from collections import deque
-from .kp2d_extractor import RTMPosse2DExtractor
-from .kp3d_reconstructor import MHFormer3DReconstructor
+from .kp2d_extractor import I2dPoseExtractor
+from .kp3d_reconstructor import I3dPoseReconstructor
 from .renderer import H36MKeypointsRenderer
 from .converter import DataConverter
 from .pose_judger import judge_pose
 import numpy as np
 import logging
 
-logger = logging.getLogger("core")
+logger = logging.getLogger("analyzer")
 
 
 class FrameAnalyzer:
-    def __init__(self):
-        self._kp2d_coco17_extractor = RTMPosse2DExtractor()
-        self._kp3d_reconstructor = MHFormer3DReconstructor()
+    def __init__(self, kp2d_extractor: I2dPoseExtractor, kp3d_reconstructor: I3dPoseReconstructor):
+        self._kp2d_extractor = kp2d_extractor
+        self._kp3d_reconstructor = kp3d_reconstructor
         # 用于存储历史帧的骨骼数据，供 MHFormer 重建 3D 骨骼时作为临近帧使用。
         # 实际只需要 176 帧，不过多的一点消耗影响不大，保持数值一致性更容易理解意图
         self._frame_buffer = deque[np.ndarray](maxlen=351)
 
-    def analyze_frame(self, frame: np.ndarray, pose_type: str) -> tuple[np.ndarray, tuple[str]]:
+    def analyze_frame(self, frame: np.ndarray, pose_type: str) -> tuple[np.ndarray, list[str]]:
         """
         对输入帧进行分析处理。
 
@@ -29,8 +29,8 @@ class FrameAnalyzer:
             frame_index: 当前帧序号，用于从预加载的骨骼数据中取对应帧。
 
         Returns:
-            处理后的图像，shape=(H, W, 3)，dtype=uint8。
-            输出将经 cv2.imencode 压缩为 JPEG 后推送至前端。
+            0: 处理后的图像，shape=(H, W, 3)，dtype=uint8。输出将经 cv2.imencode 压缩为 JPEG 后推送至前端。
+            1: 触发的违反规则的 ID 列表，如 ['R1', 'R2']，用于前端展示告警信息。
         """
 
         # 分析过程
@@ -39,8 +39,12 @@ class FrameAnalyzer:
         # 3. 根据 3D 骨骼点计算出需要告警的关键点
         # 4. 将 3D 骨骼得出的关键点部位反向映射到 2D 骨骼点上，得到需要告警的 2D 骨骼点索引列表
         # 5. 绘制 2D 骨骼连线到帧上，告警点及其关联骨骼使用高亮颜色，作为返回结果
-        kp2d_coco17 = self._kp2d_coco17_extractor.extract(frame)  # out: (17, 3)，COCO17 格式
-        kp2d_h36m = DataConverter.coco17_to_h36m(kp2d_coco17)  # out: (17, 2)，H36M 格式
+        kp2d_coco17 = self._kp2d_extractor.extract(frame)
+        if self._kp2d_extractor.data_out == "COCO17":
+            kp2d_h36m = DataConverter.coco17_to_h36m(kp2d_coco17)
+        elif self._kp2d_extractor.data_out == "H36M":
+            kp2d_h36m = kp2d_coco17
+            
         self._frame_buffer.append(kp2d_h36m)
 
         kps_3d = self._kp3d_reconstructor.reconstruct(
@@ -71,4 +75,5 @@ class FrameAnalyzer:
         Returns:
             对应 pose_type 的规则字典，结构自定。
         """
+        return {}
         raise NotImplementedError

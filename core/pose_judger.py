@@ -1,7 +1,7 @@
 import numpy as np
 
 
-def judge_pose(kp3d: np.ndarray, rule: dict) -> tuple[tuple[str], tuple[str]]:
+def judge_pose(kp3d: np.ndarray, rule: dict) -> tuple[list[str], list[str]]:
     """
     根据规则对 3D 骨骼姿势进行判定，返回触发的规则 ID 和涉及的关节点。
 
@@ -14,10 +14,11 @@ def judge_pose(kp3d: np.ndarray, rule: dict) -> tuple[tuple[str], tuple[str]]:
               预期包含各关节的角度阈值、相对距离约束等。
 
     Returns:
-        violated_rule_ids: 被违反的规则 ID 元组，如 ('R1', 'R2')，
-                           未触发任何规则时为空元组 ()。
+        violated_rule_ids: 被违反的规则 ID 元组，如 ['R1', 'R2']，
+                           未触发任何规则时为空列表 []。
         affected_keypoints: 涉及告警的 H36M 关节点名称元组，
-                            如 ('left_elbow', 'left_wrist')，
+                            如 ['left_elbow', 'left_wrist']，
                             会被用于反向映射到 2D 骨骼渲染时高亮。
     """
+    return ([], [])  # 占位返回，实际实现需要根据规则逻辑进行判定
     raise NotImplementedError

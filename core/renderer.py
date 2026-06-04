@@ -3,12 +3,16 @@ import cv2
 
 
 class H36MKeypointsRenderer:
-    # 默认颜色 —— 中性、低辨识度
-    _KEYPOINT_COLOR = (128, 128, 128)  # 灰色点
-    _SKELETON_COLOR = (100, 100, 100)  # 暗灰线
-    # 告警颜色 —— 高辨识度，引人关注
-    _ALERT_KEYPOINT_COLOR = (0, 255, 0)  # 亮绿点
-    _ALERT_SKELETON_COLOR = (0, 0, 255)  # 亮红线
+    # ---- 默认颜色 (BGR) ----
+    # 骨架: 蓝绿色，中性温和
+    _SKELETON_COLOR = (251, 220, 72)
+    # 节点: 同色系的深色，点在线上清晰可见
+    _KEYPOINT_COLOR = (200, 180, 50)
+
+    # ---- 告警颜色 (BGR) ----
+    # 高亮连线用红色，高亮节点用黄色，与默认蓝绿形成强对比
+    _ALERT_SKELETON_COLOR = (0, 0, 255)
+    _ALERT_KEYPOINT_COLOR = (0, 255, 255)
 
     _CIRCLE_RADIUS = 4
     _ALERT_CIRCLE_RADIUS = 6

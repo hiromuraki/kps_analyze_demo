@@ -10,9 +10,8 @@ import logging
 import random
 import time
 from datetime import datetime
-from core.rtmpose import extract_2d_keypoint
 import cv2
-from core import FrameAnalyzer
+from core import FrameAnalyzer, Mock2dExtractor, Mock3dReconstructor
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("main")
@@ -28,6 +27,7 @@ args = parser.parse_args()
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
+SELECTED_POSE_TYPE = "深蹲"
 
 
 def video_source_factory(mode: str) -> IRgbVideoSource:
@@ -109,23 +109,28 @@ async def websocket_endpoint(ws: WebSocket):
     stop_event = asyncio.Event()
     log_task = asyncio.create_task(broadcast_log(ws, stop_event))
 
-    fa = FrameAnalyzer()
+    fa = FrameAnalyzer(
+        kp2d_extractor=Mock2dExtractor(),
+        kp3d_reconstructor=Mock3dReconstructor(),
+    )
 
     try:
         frame_interval = 1.0 / camera.fps
         while camera.is_open():
             t0 = time.monotonic()
             frame = camera.get_frame()
-            analyzed_frame = fa.analyze_frame(frame)
+            rendered_frame, violated_rule_id_set = fa.analyze_frame(frame, SELECTED_POSE_TYPE)
             if frame_count == 0:
                 logger.info(f"First frame: shape={frame.shape}, mean_pixel={frame.mean():.1f}")
             frame_count += 1
-            _, buffer = cv2.imencode(".jpg", analyzed_frame, [cv2.IMWRITE_JPEG_QUALITY, 50])
+            _, buffer = cv2.imencode(".jpg", rendered_frame, [cv2.IMWRITE_JPEG_QUALITY, 50])
             await ws.send_bytes(buffer.tobytes())
             elapsed = time.monotonic() - t0
             await asyncio.sleep(max(0, frame_interval - elapsed))
-    except (WebSocketDisconnect, RuntimeError):
-        pass
+    except WebSocketDisconnect:
+        logger.info("Client disconnected")
+    except RuntimeError as e:
+        logger.error(f"Runtime error in streaming loop: {e}")
     finally:
         stop_event.set()
         log_task.cancel()
@@ -138,24 +143,6 @@ async def websocket_endpoint(ws: WebSocket):
 
 
 if __name__ == "__main__":
-    import sys
+    import uvicorn
 
-    if "--test-rtmpose" in sys.argv:
-        model_path = sys.argv[sys.argv.index("--test-rtmpose") + 1]
-        from core.rtmpose import COCO_KP_NAMES
-
-        frame = cv2.imread("sample_data/bus.jpg")
-        if frame is None:
-            logger.error("Failed to read sample_data/bus.jpg")
-            sys.exit(1)
-        logger.info(f"Loaded image: shape={frame.shape}")
-
-        kps = extract_2d_keypoint(frame, model_path=model_path)
-        logger.info(f"Keypoints shape: {kps.shape}")
-        for i, (x, y, c) in enumerate(kps):
-            logger.info(f"  [{i:2d}] {COCO_KP_NAMES[i]:15s} x={x:6.1f} y={y:6.1f} conf={c:.3f}")
-
-    else:
-        import uvicorn
-
-        uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000)

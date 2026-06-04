@@ -13,3 +13,5 @@ wheels/
 _unused/
 sample_data/
 models/
+rtm-det-aidlite/qnnout/*
+mhformer-aidlite/qnnmodel/*
