@@ -118,13 +118,13 @@ async def websocket_endpoint(ws: WebSocket):
 
     if MOCK_MODE:
         fa = FrameAnalyzer(
-            kp2d_extractor=RTMPose2dPoseExtractor(),
-            kp3d_reconstructor=MHFormer3dPoseReconstructor(),
+            kp2d_extractor=Mock2dExtractor(),
+            kp3d_reconstructor=Mock3dReconstructor(),
         )
     else:
         fa = FrameAnalyzer(
-            kp2d_extractor=Mock2dExtractor(),
-            kp3d_reconstructor=Mock3dReconstructor(),
+            kp2d_extractor=RTMPose2dPoseExtractor(),
+            kp3d_reconstructor=MHFormer3dPoseReconstructor(),
         )
 
     try:
