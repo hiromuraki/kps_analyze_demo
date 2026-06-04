@@ -11,7 +11,13 @@ import random
 import time
 from datetime import datetime
 import cv2
-from core import FrameAnalyzer, Mock2dExtractor, Mock3dReconstructor
+from core import (
+    FrameAnalyzer,
+    Mock2dExtractor,
+    Mock3dReconstructor,
+    RTMPose2dPoseExtractor,
+    MHFormer3dPoseReconstructor,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("main")
@@ -28,6 +34,7 @@ args = parser.parse_args()
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 SELECTED_POSE_TYPE = "深蹲"
+MOCK_MODE = False
 
 
 def video_source_factory(mode: str) -> IRgbVideoSource:
@@ -109,10 +116,16 @@ async def websocket_endpoint(ws: WebSocket):
     stop_event = asyncio.Event()
     log_task = asyncio.create_task(broadcast_log(ws, stop_event))
 
-    fa = FrameAnalyzer(
-        kp2d_extractor=Mock2dExtractor(),
-        kp3d_reconstructor=Mock3dReconstructor(),
-    )
+    if MOCK_MODE:
+        fa = FrameAnalyzer(
+            kp2d_extractor=RTMPose2dPoseExtractor(),
+            kp3d_reconstructor=MHFormer3dPoseReconstructor(),
+        )
+    else:
+        fa = FrameAnalyzer(
+            kp2d_extractor=Mock2dExtractor(),
+            kp3d_reconstructor=Mock3dReconstructor(),
+        )
 
     try:
         frame_interval = 1.0 / camera.fps
