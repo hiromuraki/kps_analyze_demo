@@ -1,3 +1,3 @@
 #!/bin/bash
 
-uv run main.py --mode camera --camera 1 --width 640 --height 480 --fps 30
+uv sync --frozen && uv run main.py --mode camera --camera 1 --width 640 --height 480 --fps 30
