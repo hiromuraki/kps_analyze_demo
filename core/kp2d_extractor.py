@@ -8,16 +8,22 @@ import logging
 _project_root = Path(__file__).resolve().parent.parent
 
 _RTM_DET_DIR = _project_root / "rtm-det-aidlite"
-if str(_RTM_DET_DIR) not in sys.path:
-    sys.path.insert(0, str(_RTM_DET_DIR))
-
-from rtm_vision import RTMDet, RTMPose  # noqa: E402 (path setup above)
-
 _DEFAULT_DET_MODEL = str(_RTM_DET_DIR / "qnnout" / "rtmdet_m_raw_qcs8550_fp16.qnn236.ctx.bin.aidem")
 _DEFAULT_POSE_MODEL = str(_RTM_DET_DIR / "qnnout" / "rtmpose-l_raw_qcs8550_fp16.qnn236.ctx.bin.aidem")
 
-
 logger = logging.getLogger("kp2d_extractor")
+
+_rtm_imported = False
+
+
+def _ensure_rtm_imports() -> None:
+    """Lazy-import rtm_vision (requires aidlite SDK) on first use."""
+    global _rtm_imported
+    if _rtm_imported:
+        return
+    if str(_RTM_DET_DIR) not in sys.path:
+        sys.path.insert(0, str(_RTM_DET_DIR))
+    _rtm_imported = True
 
 
 class I2dPoseExtractor:
@@ -27,6 +33,34 @@ class I2dPoseExtractor:
 
     def extract(self, frame: np.ndarray) -> np.ndarray:
         raise NotImplementedError
+
+
+class Mock2dExtractor(I2dPoseExtractor):
+    def __init__(self):
+        self._kps_npz = np.load("./sample_data/example_2d_h36m_kps.npz")
+        self._kps_frames: np.ndarray = self._kps_npz[self._kps_npz.files[0]]  # (Frames, 17, 3)
+        self._kps_frame_count = self._kps_frames.shape[0]
+        self._frame_index = 0
+        logger.info(f"Loaded 2D keypoints: {self._kps_frames.shape}")
+
+    @property
+    def data_out(self) -> Literal["COCO17", "H36M"]:
+        return "H36M"
+
+    def extract(self, frame: np.ndarray) -> np.ndarray:
+        """
+        从输入帧中提取 2D 关键点。
+
+        Args:
+            frame: BGR 图像，shape=(H, W, 3)，dtype=uint8，值域 [0, 255]。
+
+        Returns:
+            关键点数组，shape=(17, 2)，每行 [x, y]。
+        """
+
+        kps = self._kps_frames[self._frame_index]
+        self._frame_index = (self._frame_index + 1) % self._kps_frame_count
+        return kps
 
 
 class RTMPose2dPoseExtractor(I2dPoseExtractor):
@@ -76,8 +110,11 @@ class RTMPose2dPoseExtractor(I2dPoseExtractor):
     # ------------------------------------------------------------------
 
     @property
-    def _det_instance(self) -> RTMDet:
+    def _det_instance(self):
         if self._det is None:
+            _ensure_rtm_imports()
+            from rtm_vision import RTMDet  # noqa: E402
+
             self._det = RTMDet(
                 self._det_model,
                 score_thr=self._det_score_thr,
@@ -86,8 +123,11 @@ class RTMPose2dPoseExtractor(I2dPoseExtractor):
         return self._det
 
     @property
-    def _pose_instance(self) -> RTMPose:
+    def _pose_instance(self):
         if self._pose is None:
+            _ensure_rtm_imports()
+            from rtm_vision import RTMPose  # noqa: E402
+
             self._pose = RTMPose(self._pose_model)
         return self._pose
 
@@ -175,31 +215,3 @@ class RTMPose2dPoseExtractor(I2dPoseExtractor):
 
     def __exit__(self, *args: object) -> None:
         self.close()
-
-
-class Mock2dExtractor(I2dPoseExtractor):
-    def __init__(self):
-        self._kps_npz = np.load("./sample_data/example_2d_h36m_kps.npz")
-        self._kps_frames: np.ndarray = self._kps_npz[self._kps_npz.files[0]]  # (Frames, 17, 3)
-        self._kps_frame_count = self._kps_frames.shape[0]
-        self._frame_index = 0
-        logger.info(f"Loaded 2D keypoints: {self._kps_frames.shape}")
-
-    @property
-    def data_out(self) -> Literal["COCO17", "H36M"]:
-        return "H36M"
-
-    def extract(self, frame: np.ndarray) -> np.ndarray:
-        """
-        从输入帧中提取 2D 关键点。
-
-        Args:
-            frame: BGR 图像，shape=(H, W, 3)，dtype=uint8，值域 [0, 255]。
-
-        Returns:
-            关键点数组，shape=(17, 2)，每行 [x, y]。
-        """
-
-        kps = self._kps_frames[self._frame_index % self._kps_frame_count]
-        self._frame_index += 1
-        return kps

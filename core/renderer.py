@@ -2,7 +2,7 @@ import numpy as np
 import cv2
 
 
-class H36MKeypointsRenderer:
+class H36M2dKeypointsRenderer:
     # ---- 默认颜色 (BGR) ----
     # 骨架: 蓝绿色，中性温和
     _SKELETON_COLOR = (251, 220, 72)

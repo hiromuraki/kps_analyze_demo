@@ -2,7 +2,7 @@ from __future__ import annotations
 from collections import deque
 from .kp2d_extractor import I2dPoseExtractor
 from .kp3d_reconstructor import I3dPoseReconstructor
-from .renderer import H36MKeypointsRenderer
+from .renderer import H36M2dKeypointsRenderer
 from .converter import DataConverter
 from .pose_judger import judge_pose
 import numpy as np
@@ -19,18 +19,19 @@ class FrameAnalyzer:
         # 实际只需要 176 帧，不过多的一点消耗影响不大，保持数值一致性更容易理解意图
         self._frame_buffer = deque[np.ndarray](maxlen=351)
 
-    def analyze_frame(self, frame: np.ndarray, pose_type: str) -> tuple[np.ndarray, list[str]]:
+    def analyze_frame(self, frame: np.ndarray, pose_type: str) -> tuple[np.ndarray, np.ndarray, list[str]]:
         """
         对输入帧进行分析处理。
 
         Args:
             frame: BGR 图像，shape=(H, W, 3)，dtype=uint8，值域 [0, 255]。
                 由 IRgbVideoSource.get_frame() 返回。
-            frame_index: 当前帧序号，用于从预加载的骨骼数据中取对应帧。
+            pose_type: 动作类型，指示需要采用什么规则对当前动作进行分析
 
         Returns:
-            0: 处理后的图像，shape=(H, W, 3)，dtype=uint8。输出将经 cv2.imencode 压缩为 JPEG 后推送至前端。
-            1: 触发的违反规则的 ID 列表，如 ['R1', 'R2']，用于前端展示告警信息。
+            0: 进行 2D 骨骼叠加处理后的图像，shape=(H, W, 3)，dtype=uint8。
+            1: 3D 骨骼点坐标，shape=(17, 3)，dtype=float32。骨骼点顺序为 H36M 定义的 17 个关键点。
+            2: 触发的违反规则的 ID 列表，如 ['R1', 'R2']，用于前端展示告警信息。
         """
 
         # 分析过程
@@ -44,7 +45,7 @@ class FrameAnalyzer:
             kp2d_h36m = DataConverter.coco17_to_h36m(kp2d_coco17)
         elif self._kp2d_extractor.data_out == "H36M":
             kp2d_h36m = kp2d_coco17
-            
+
         self._frame_buffer.append(kp2d_h36m)
 
         kps_3d = self._kp3d_reconstructor.reconstruct(
@@ -61,9 +62,9 @@ class FrameAnalyzer:
         alert_kps_2d = [11, 12, 13]  # TODO: 替换为反向映射的骨骼节点
 
         # 渲染结果
-        rendered_frame = H36MKeypointsRenderer.render_on_frame(frame, kp2d_h36m, alert_kps_2d)
+        rendered_frame = H36M2dKeypointsRenderer.render_on_frame(frame, kp2d_h36m, alert_kps_2d)
 
-        return rendered_frame, violated_rule_id_set
+        return rendered_frame, kps_3d, violated_rule_id_set
 
     def _get_rule(self, pose_type: str) -> dict:
         """

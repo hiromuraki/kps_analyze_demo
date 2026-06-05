@@ -1,4 +1,5 @@
 from __future__ import annotations
+import logging
 from pathlib import Path
 import sys
 import numpy as np
@@ -6,12 +7,21 @@ import numpy as np
 _project_root = Path(__file__).resolve().parent.parent
 
 _MHFORMER_DIR = _project_root / "mhformer-aidlite"
-if str(_MHFORMER_DIR) not in sys.path:
-    sys.path.insert(0, str(_MHFORMER_DIR))
-
-from lite_demo.qnn_reconstruct import QNN3DReconstructor  # noqa: E402
-
 _DEFAULT_MODEL_DIR = str(_MHFORMER_DIR / "qnnmodel")
+
+_mhformer_imported = False
+
+logger = logging.getLogger("kp3d_reconstructor")
+
+
+def _ensure_mhformer_imports() -> None:
+    """Lazy-import qnn_reconstruct (requires aidlite SDK) on first use."""
+    global _mhformer_imported
+    if _mhformer_imported:
+        return
+    if str(_MHFORMER_DIR) not in sys.path:
+        sys.path.insert(0, str(_MHFORMER_DIR))
+    _mhformer_imported = True
 
 
 class I3dPoseReconstructor:
@@ -24,7 +34,12 @@ class I3dPoseReconstructor:
 
 
 class Mock3dReconstructor(I3dPoseReconstructor):
-    def __init__(self): ...
+    def __init__(self):
+        self._kps_npz = np.load("./sample_data/example_3d_kps.npz")
+        self._kps_frames: np.ndarray = self._kps_npz[self._kps_npz.files[0]]  # (Frames, 17, 3)
+        self._kps_frame_count = self._kps_frames.shape[0]
+        self._frame_index = 0
+        logger.info(f"Loaded 3D keypoints: {self._kps_frames.shape}")
 
     @property
     def data_out(self) -> str:
@@ -41,8 +56,9 @@ class Mock3dReconstructor(I3dPoseReconstructor):
         Returns:
             返回第 frame_index 帧的重建结果
         """
-        return np.zeros((17, 3))  # 占位返回，实际实现需要调用 MHFormer 模型进行推理
-        raise NotImplementedError
+        kps = self._kps_frames[self._frame_index]
+        self._frame_index = (self._frame_index + 1) % self._kps_frame_count
+        return kps
 
 
 class MHFormer3dPoseReconstructor(I3dPoseReconstructor):
@@ -90,8 +106,11 @@ class MHFormer3dPoseReconstructor(I3dPoseReconstructor):
     # ------------------------------------------------------------------
 
     @property
-    def _reconstructor(self) -> QNN3DReconstructor:
+    def _reconstructor(self):
         if self._instance is None:
+            _ensure_mhformer_imports()
+            from lite_demo.qnn_reconstruct import QNN3DReconstructor  # noqa: E402
+
             self._instance = QNN3DReconstructor(
                 model_dir=self._model_dir,
                 disable_flip=self._disable_flip,
