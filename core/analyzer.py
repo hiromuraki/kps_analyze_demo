@@ -110,6 +110,7 @@ class FrameAnalyzer:
 
         # 反向映射：关节点名称 → H36M 索引 (0-16)
         alert_kps_2d = _map_kp_names_to_indices(affected_keypoints)
+        logger.info(f"错误的 3D 关节点：({affected_keypoints}), 对应的 2D 点：{alert_kps_2d}")
 
         # 渲染结果
         rendered_frame = H36M2dKeypointsRenderer.render_on_frame(frame, kp2d_h36m, alert_kps_2d)
