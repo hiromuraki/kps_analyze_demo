@@ -1,7 +1,9 @@
+import logging
 import json
 from pathlib import Path
 
 _RULES_DIR = Path("./data/rules")
+logger = logging.getLogger("rules_loader")
 
 
 def get_rule_names() -> list[str]:
@@ -26,11 +28,12 @@ def load_rule(pose_type: str) -> dict:
         >>> rule = load_rule("深蹲")
         >>> rule["max_knee_angle"]
     """
+    if not pose_type:
+        return {}
+
     path = _RULES_DIR / f"{pose_type}.json"
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError) as e:
-        import logging
-
-        logging.getLogger("rules_loader").warning(f"Failed to load rule '{pose_type}': {e}")
+        logger.warning(f"Failed to load rule '{pose_type}': {e}")
         return {}

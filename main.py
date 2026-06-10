@@ -83,7 +83,7 @@ def frame_analyzer_factory(mode: Literal["mock", "default"]) -> FrameAnalyzer:
 
 
 AVAILABLE_POSES = get_rule_names()
-selected_pose: str = ""
+selected_pose: str = AVAILABLE_POSES[0] if AVAILABLE_POSES else ""
 
 
 @app.get("/poses")
