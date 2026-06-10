@@ -1,14 +1,64 @@
 from __future__ import annotations
 from collections import deque
+from collections.abc import Iterable
 from .kp2d_extractor import I2dPoseExtractor
 from .kp3d_reconstructor import I3dPoseReconstructor
 from .renderer import H36M2dKeypointsRenderer
 from .converter import DataConverter
 from .pose_judger import judge_pose
+from .rules_loader import load_rule
 import numpy as np
 import logging
 
 logger = logging.getLogger("analyzer")
+
+# H36M 关节点名称 → 索引 (0-16)
+_H36M_NAME_TO_INDEX: dict[str, int] = {
+    "pelvis": 0,
+    "right_hip": 1,
+    "r_hip": 1,
+    "right_knee": 2,
+    "r_knee": 2,
+    "right_ankle": 3,
+    "r_ankle": 3,
+    "left_hip": 4,
+    "l_hip": 4,
+    "left_knee": 5,
+    "l_knee": 5,
+    "left_ankle": 6,
+    "l_ankle": 6,
+    "spine": 7,
+    "thorax": 8,
+    "chest": 8,
+    "nose": 9,
+    "head": 9,
+    "head_top": 10,
+    "top": 10,
+    "left_shoulder": 11,
+    "l_shoulder": 11,
+    "left_elbow": 12,
+    "l_elbow": 12,
+    "left_wrist": 13,
+    "l_wrist": 13,
+    "right_shoulder": 14,
+    "r_shoulder": 14,
+    "right_elbow": 15,
+    "r_elbow": 15,
+    "right_wrist": 16,
+    "r_wrist": 16,
+}
+
+
+def _map_kp_names_to_indices(names: Iterable[str]) -> list[int]:
+    """将关节点名称转换为 H36M 索引列表 (0-16)，忽略未知名称。"""
+    indices = []
+    for name in names:
+        idx = _H36M_NAME_TO_INDEX.get(name.lower().strip())
+        if idx is not None:
+            indices.append(idx)
+        else:
+            logger.warning(f"Unknown keypoint name: '{name}'")
+    return indices
 
 
 class FrameAnalyzer:
@@ -55,26 +105,13 @@ class FrameAnalyzer:
 
         violated_rule_id_set, affected_keypoints = judge_pose(
             kps_3d,
-            self._get_rule(pose_type),
-        )  # TODO: 根据规则判断姿势，得到告警点索引列表
+            load_rule(pose_type),
+        )
 
-        # TODO: 反向映射 3D 骨骼点索引到 2D 骨骼点索引，得到需要告警的 2D 骨骼点索引列表
-        alert_kps_2d = [11, 12, 13]  # TODO: 替换为反向映射的骨骼节点
+        # 反向映射：关节点名称 → H36M 索引 (0-16)
+        alert_kps_2d = _map_kp_names_to_indices(affected_keypoints)
 
         # 渲染结果
         rendered_frame = H36M2dKeypointsRenderer.render_on_frame(frame, kp2d_h36m, alert_kps_2d)
 
         return rendered_frame, kps_3d, violated_rule_id_set
-
-    def _get_rule(self, pose_type: str) -> dict:
-        """
-        根据 pose_type 获取对应的姿势判定规则。
-
-        Args:
-            pose_type: 姿势类型字符串，如 "深蹲" 等。
-
-        Returns:
-            对应 pose_type 的规则字典，结构自定。
-        """
-        return {}
-        raise NotImplementedError

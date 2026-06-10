@@ -18,6 +18,7 @@ from core import (
     Mock3dReconstructor,
     RTMPose2dPoseExtractor,
     MHFormer3dPoseReconstructor,
+    judge_pose
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
