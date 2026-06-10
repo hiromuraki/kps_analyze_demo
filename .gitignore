@@ -11,7 +11,7 @@ wheels/
 
 # Data
 _unused/
-sample_data/
+# sample_data/
 models/
 rtm-det-aidlite/qnnout/*
 mhformer-aidlite/qnnmodel/*
