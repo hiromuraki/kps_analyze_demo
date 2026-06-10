@@ -5,11 +5,11 @@
 ## 快速开始
 
 ```bash
-# 开发机（预录视频）
-uv run main.py --camera -1 --video-path ./sample_data/video_39.mp4
+# 开发机（预录视频，此处指定视频为 ./sample_data/video_39.mp4）
+python main.py --video-path ./sample_data/video_39.mp4
 
-# 目标机（真实摄像头，摄像头序号需要视实际需要更改）
-uv run main.py --analyzer default --camera 0 --width 640 --height 480 --fps 30
+# 目标机（真实摄像头，此处指定摄像头序号为0，摄像头序号需要视实际需要更改）
+python main.py --analyzer default --camera 0 --width 640 --height 480 --fps 30
 ```
 
 浏览器打开 `http://localhost:2800`。

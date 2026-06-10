@@ -46,7 +46,7 @@ def video_source_factory(camera_id: int) -> IRgbVideoSource:
                 cap.release()
         return available
 
-    if camera_id is None or camera_id < 0:
+    if camera_id is None:
         cameras = probe_cameras()
         if cameras:
             logger.info(f"Available cameras: {cameras}")
@@ -54,8 +54,7 @@ def video_source_factory(camera_id: int) -> IRgbVideoSource:
         else:
             logger.warning("No camera devices found, falling back to index 0")
             camera_id = 0
-
-    if camera_id == -1:
+    elif camera_id == -1:
         logger.info(f"Using mock video source with video file: {args.video_path}")
         return MockRgbVideoSource(args.video_path)
     elif camera_id >= 0:
