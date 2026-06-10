@@ -18,7 +18,7 @@ from core import (
     Mock3dReconstructor,
     RTMPose2dPoseExtractor,
     MHFormer3dPoseReconstructor,
-    judge_pose
+    judge_pose,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -133,21 +133,10 @@ async def websocket_endpoint(ws: WebSocket):
             # 捕获当前帧并进行分析
             frame = camera.get_frame()
             rendered_frame, keypoints_3d, violated_rule_id_set = frame_analyzer.analyze_frame(frame, selected_pose)
-            if random.randint(1, 200) == 1:
-                message = random.choice(
-                    [
-                        f"{selected_pose}, 一切正常",
-                        f"{selected_pose}, 检测到运动",
-                        f"{selected_pose}, 骨骼追踪中...",
-                        f"{selected_pose}, 帧率稳定",
-                        f"{selected_pose}, 分析中...",
-                        f"{selected_pose}, 光线条件良好",
-                        f"{selected_pose}, 正在处理当前帧",
-                        f"{selected_pose}, 连接稳定",
-                        f"{selected_pose}, 模型已加载",
-                    ]
+            if violated_rule_id_set:
+                msg = json.dumps(
+                    {"type": "log", "ts": datetime.now().strftime("%H:%M:%S"), "text": ";".join(violated_rule_id_set)}
                 )
-                msg = json.dumps({"type": "log", "ts": datetime.now().strftime("%H:%M:%S"), "text": message})
                 await ws.send_text(msg)
 
             # 首帧用于诊断
