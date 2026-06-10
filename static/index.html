@@ -86,6 +86,7 @@ ws.onmessage = (e) => {
       div.className = "msg";
       div.innerHTML = `<span class="ts">${msg.ts}</span> ${msg.text}`;
       logEl.appendChild(div);
+      while (logEl.children.length > 300) logEl.firstChild.remove();
       logEl.scrollTop = logEl.scrollHeight;
     } else if (msg.type === "kps3d") {
       updateSkeleton(msg.data);
