@@ -4,6 +4,13 @@ from pathlib import Path
 _RULES_DIR = Path("./data/rules")
 
 
+def get_rule_names() -> list[str]:
+    """返回 ``data/rules/`` 目录下所有规则名（即 .json 文件名去扩展名）。"""
+    if not _RULES_DIR.is_dir():
+        return []
+    return sorted(p.stem for p in _RULES_DIR.glob("*.json"))
+
+
 def load_rule(pose_type: str) -> dict:
     """
     根据动作类型加载对应的规则。

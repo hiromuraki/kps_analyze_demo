@@ -17,6 +17,7 @@ from core import (
     Mock3dReconstructor,
     RTMPose2dPoseExtractor,
     MHFormer3dPoseReconstructor,
+    get_rule_names,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -81,12 +82,13 @@ def frame_analyzer_factory(mode: Literal["mock", "default"]) -> FrameAnalyzer:
         )
 
 
-AVAILABLE_POSES = ["标准俯卧撑", "器械倒蹬", "高位下拉", "哈克深蹲", "倒登腿举"]
+AVAILABLE_POSES = get_rule_names()
 selected_pose: str = ""
 
 
 @app.get("/poses")
 async def get_poses():
+    AVAILABLE_POSES = get_rule_names()
     return {"poses": AVAILABLE_POSES, "selected": selected_pose}
 
 
