@@ -95,90 +95,94 @@ ws.onmessage = (e) => {
 ws.onclose = () => img.alt = "disconnected";
 
 // =========================================================================
-// Three.js 3D Skeleton
+// Three.js 3D Skeleton（WebGL 不可用时降级为占位文字）
 // =========================================================================
-const H36M_BONES = [
-  [0,1],[1,2],[2,3], [0,4],[4,5],[5,6],
-  [0,7],[7,8],[8,9],[9,10], [8,11],[11,12],
-  [12,13],[8,14],[14,15],[15,16]
-];
+let updateSkeleton = (_kps) => {};  // 默认 no-op
 
-const container = document.getElementById("canvas-container");
-const scene = new THREE.Scene();
-scene.fog = new THREE.Fog(0x0a0a14, 3, 10);
+(function init3D() {
+  try {
+    const container = document.getElementById("canvas-container");
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.Fog(0x0a0a14, 3, 10);
 
-const camera = new THREE.PerspectiveCamera(45, container.clientWidth / (container.clientHeight || 1), 0.1, 20);
-camera.position.set(1.5, 1.2, 2.5);
-camera.lookAt(0, 0.6, 0);
+    const camera = new THREE.PerspectiveCamera(45, container.clientWidth / (container.clientHeight || 1), 0.1, 20);
+    camera.position.set(1.5, 1.2, 2.5);
+    camera.lookAt(0, 0.6, 0);
 
-const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-renderer.setPixelRatio(window.devicePixelRatio);
-renderer.setSize(container.clientWidth, container.clientHeight);
-container.appendChild(renderer.domElement);
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setSize(container.clientWidth, container.clientHeight);
+    container.appendChild(renderer.domElement);
 
-const controls = new THREE.OrbitControls(camera, renderer.domElement);
-controls.target.set(0, 0.6, 0);
-controls.enableDamping = true;
-controls.dampingFactor = 0.1;
-controls.update();
+    const controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.target.set(0, 0.6, 0);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.1;
+    controls.update();
 
-// Lights
-scene.add(new THREE.AmbientLight(0xffffff, 0.8));
-scene.add(new THREE.DirectionalLight(0xffffff, 0.4));
+    scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+    scene.add(new THREE.DirectionalLight(0xffffff, 0.4));
 
-// Grid floor
-const grid = new THREE.GridHelper(3, 20, 0x333355, 0x1a1a2e);
-scene.add(grid);
+    const grid = new THREE.GridHelper(3, 20, 0x333355, 0x1a1a2e);
+    scene.add(grid);
 
-// Joint spheres (reuse per frame)
-const jointsGroup = new THREE.Group();
-scene.add(jointsGroup);
-const jointMeshes = [];
-for (let i = 0; i < 17; i++) {
-  const geo = new THREE.SphereGeometry(0.025, 16, 16);
-  const mat = new THREE.MeshBasicMaterial({ color: 0x60a5fa });
-  const mesh = new THREE.Mesh(geo, mat);
-  jointsGroup.add(mesh);
-  jointMeshes.push(mesh);
-}
+    // Joint spheres
+    const jointsGroup = new THREE.Group();
+    scene.add(jointsGroup);
+    const jointMeshes = [];
+    for (let i = 0; i < 17; i++) {
+      const geo = new THREE.SphereGeometry(0.025, 16, 16);
+      const mat = new THREE.MeshBasicMaterial({ color: 0x60a5fa });
+      const mesh = new THREE.Mesh(geo, mat);
+      jointsGroup.add(mesh);
+      jointMeshes.push(mesh);
+    }
 
-// Bone lines (rebuild per frame)
-const linesMaterial = new THREE.LineBasicMaterial({ color: 0x3b82f6, transparent: true, opacity: 0.6 });
-const linesGroup = new THREE.Group();
-scene.add(linesGroup);
+    // Bone lines
+    const linesMaterial = new THREE.LineBasicMaterial({ color: 0x3b82f6, transparent: true, opacity: 0.6 });
+    const linesGroup = new THREE.Group();
+    scene.add(linesGroup);
 
-function updateSkeleton(kps) {
-  // Update joint positions (Y flip for screen→3D coord)
-  for (let i = 0; i < 17; i++) {
-    jointMeshes[i].position.set(kps[i][0], -kps[i][1], kps[i][2] || 0);
+    const H36M_BONES = [
+      [0,1],[1,2],[2,3], [0,4],[4,5],[5,6],
+      [0,7],[7,8],[8,9],[9,10], [8,11],[11,12],
+      [12,13],[8,14],[14,15],[15,16]
+    ];
+
+    updateSkeleton = (kps) => {
+      for (let i = 0; i < 17; i++) {
+        jointMeshes[i].position.set(kps[i][0], -kps[i][1], kps[i][2] || 0);
+      }
+      linesGroup.clear();
+      const points = [];
+      H36M_BONES.forEach(([a, b]) => {
+        const pa = jointMeshes[a].position;
+        const pb = jointMeshes[b].position;
+        points.push(new THREE.Vector3(pa.x, pa.y, pa.z));
+        points.push(new THREE.Vector3(pb.x, pb.y, pb.z));
+      });
+      const geo = new THREE.BufferGeometry().setFromPoints(points);
+      linesGroup.add(new THREE.LineSegments(geo, linesMaterial));
+    };
+
+    function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    window.addEventListener("resize", () => {
+      camera.aspect = container.clientWidth / (container.clientHeight || 1);
+      camera.updateProjectionMatrix();
+      renderer.setSize(container.clientWidth, container.clientHeight);
+    });
+  } catch (_e) {
+    const bottom = document.getElementById("bottom");
+    bottom.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#666;font-size:13px">3D skeleton unavailable (WebGL not supported)</div>';
+    // updateSkeleton 保持上面的空函数
   }
-  // Rebuild bone lines
-  linesGroup.clear();
-  const points = [];
-  H36M_BONES.forEach(([a, b]) => {
-    const pa = jointMeshes[a].position;
-    const pb = jointMeshes[b].position;
-    points.push(new THREE.Vector3(pa.x, pa.y, pa.z));
-    points.push(new THREE.Vector3(pb.x, pb.y, pb.z));
-  });
-  const geo = new THREE.BufferGeometry().setFromPoints(points);
-  linesGroup.add(new THREE.LineSegments(geo, linesMaterial));
-}
-
-// Animation loop
-function animate() {
-  requestAnimationFrame(animate);
-  controls.update();
-  renderer.render(scene, camera);
-}
-animate();
-
-// Resize handling
-window.addEventListener("resize", () => {
-  camera.aspect = container.clientWidth / (container.clientHeight || 1);
-  camera.updateProjectionMatrix();
-  renderer.setSize(container.clientWidth, container.clientHeight);
-});
+})();
 
 // =========================================================================
 // Split-pane drag
