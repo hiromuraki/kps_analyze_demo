@@ -1,66 +1,54 @@
 {
-    "action_name": "标准俯卧撑",
     "action_no": "01",
+    "action_name": "标准俯卧撑",
     "rule_list": [
         {
-            "max_value": 60,
-            "min_value": 45,
-            "node_a": "左肩",
-            "node_b": "左肘",
-            "rule_dim": "关节间",
             "rule_no": "R1",
+            "rule_type": "夹角",
+            "rule_dim": "线段夹角",
             "rule_ref": "无",
-            "rule_type": "夹角"
+            "p1": "左肩",
+            "p2": "左肘",
+            "p3": "左肘",
+            "p4": "左手腕",
+            "min_value": 90,
+            "max_value": 90
         },
         {
-            "max_value": 60,
-            "min_value": 45,
-            "node_a": "右肩",
-            "node_b": "右肘",
-            "rule_dim": "关节间",
             "rule_no": "R2",
+            "rule_type": "夹角",
+            "rule_dim": "线段夹角",
             "rule_ref": "无",
-            "rule_type": "夹角"
+            "p1": "右肩",
+            "p2": "右肘",
+            "p3": "右肘",
+            "p4": "右手腕",
+            "min_value": 90,
+            "max_value": 90
         },
         {
-            "max_value": 90,
-            "min_value": 90,
-            "node_a": "左肘",
-            "node_b": "左手腕",
-            "rule_dim": "关节间",
             "rule_no": "R3",
+            "rule_type": "夹角",
+            "rule_dim": "线段夹角",
             "rule_ref": "无",
-            "rule_type": "夹角"
+            "p1": "胸腔",
+            "p2": "左肩",
+            "p3": "左肩",
+            "p4": "左肘",
+            "min_value": 45,
+            "max_value": 60
         },
         {
-            "max_value": 90,
-            "min_value": 90,
-            "node_a": "右肘",
-            "node_b": "右手腕",
-            "rule_dim": "关节间",
             "rule_no": "R4",
+            "rule_type": "夹角",
+            "rule_dim": "线段夹角",
             "rule_ref": "无",
-            "rule_type": "夹角"
-        },
-        {
-            "max_value": 0,
-            "min_value": 0,
-            "node_a": "左手腕",
-            "node_b": "",
-            "rule_dim": "对地角度",
-            "rule_no": "R5",
-            "rule_ref": "水平面",
-            "rule_type": "夹角"
-        },
-        {
-            "max_value": 0,
-            "min_value": 0,
-            "node_a": "右手腕",
-            "node_b": "",
-            "rule_dim": "对地角度",
-            "rule_no": "R6",
-            "rule_ref": "水平面",
-            "rule_type": "夹角"
+            "p1": "胸腔",
+            "p2": "右肩",
+            "p3": "右肩",
+            "p4": "右肘",
+            "min_value": 45,
+            "max_value": 60
         }
     ]
 }

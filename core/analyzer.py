@@ -6,7 +6,6 @@ from .kp3d_reconstructor import I3dPoseReconstructor
 from .renderer import H36M2dKeypointsRenderer
 from .converter import DataConverter
 from .pose_judger import judge_pose
-from .rules_loader import load_rule
 import numpy as np
 import logging
 
@@ -62,14 +61,26 @@ def _map_kp_names_to_indices(names: Iterable[str]) -> list[int]:
 
 
 class FrameAnalyzer:
-    def __init__(self, kp2d_extractor: I2dPoseExtractor, kp3d_reconstructor: I3dPoseReconstructor):
+    def __init__(
+        self,
+        kp2d_extractor: I2dPoseExtractor,
+        kp3d_reconstructor: I3dPoseReconstructor,
+        pose_name: str,
+        pose_rule: dict,
+    ):
         self._kp2d_extractor = kp2d_extractor
         self._kp3d_reconstructor = kp3d_reconstructor
+        self._pose_name = pose_name
+        self._rule = pose_rule
         # 用于存储历史帧的骨骼数据，供 MHFormer 重建 3D 骨骼时作为临近帧使用。
         # 实际只需要 176 帧，不过多的一点消耗影响不大，保持数值一致性更容易理解意图
         self._frame_buffer = deque[np.ndarray](maxlen=351)
 
-    def analyze_frame(self, frame: np.ndarray, pose_type: str) -> tuple[np.ndarray, np.ndarray, list[str]]:
+    @property
+    def pose_name(self) -> str:
+        return self._pose_name
+
+    def analyze_frame(self, frame: np.ndarray) -> tuple[np.ndarray, np.ndarray, list[str]]:
         """
         对输入帧进行分析处理。
 
@@ -103,14 +114,11 @@ class FrameAnalyzer:
             frame_index=-1,
         )  # out: (17, 3)，取当前帧（-1）的 3D 重建结果
 
-        violated_rule_id_set, affected_keypoints = judge_pose(
-            kps_3d,
-            load_rule(pose_type),
-        )
+        violated_rule_id_set, affected_keypoints = judge_pose(kps_3d, self._rule)
 
         # 反向映射：关节点名称 → H36M 索引 (0-16)
         alert_kps_2d = _map_kp_names_to_indices(affected_keypoints)
-        logger.info(f"错误的 3D 关节点：({affected_keypoints}), 对应的 2D 点：{alert_kps_2d}")
+        logger.debug(f"错误的 3D 关节点：({affected_keypoints}), 对应的 2D 点：{alert_kps_2d}")
 
         # 渲染结果
         rendered_frame = H36M2dKeypointsRenderer.render_on_frame(frame, kp2d_h36m, alert_kps_2d)

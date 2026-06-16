@@ -1,66 +1,78 @@
 {
-    "action_name": "哈克深蹲",
     "action_no": "04",
+    "action_name": "哈克深蹲",
     "rule_list": [
         {
-            "max_value": 120,
-            "min_value": 100,
-            "node_a": "左髋",
-            "node_b": "左膝",
-            "rule_dim": "关节间",
             "rule_no": "R1",
+            "rule_type": "夹角",
+            "rule_dim": "线段夹角",
             "rule_ref": "无",
-            "rule_type": "夹角"
-        },
-        {
-            "max_value": 120,
+            "p1": "左髋",
+            "p2": "左膝",
+            "p3": "左膝",
+            "p4": "左脚踝",
             "min_value": 100,
-            "node_a": "右髋",
-            "node_b": "右膝",
-            "rule_dim": "关节间",
+            "max_value": 120
+        },
+        {
             "rule_no": "R2",
+            "rule_type": "夹角",
+            "rule_dim": "线段夹角",
             "rule_ref": "无",
-            "rule_type": "夹角"
+            "p1": "右髋",
+            "p2": "右膝",
+            "p3": "右膝",
+            "p4": "右脚踝",
+            "min_value": 100,
+            "max_value": 120
         },
         {
-            "max_value": 100,
-            "min_value": 90,
-            "node_a": "左髋",
-            "node_b": "左膝",
-            "rule_dim": "关节间",
             "rule_no": "R3",
+            "rule_type": "夹角",
+            "rule_dim": "线段夹角",
             "rule_ref": "无",
-            "rule_type": "夹角"
-        },
-        {
-            "max_value": 100,
+            "p1": "左髋",
+            "p2": "左膝",
+            "p3": "左膝",
+            "p4": "左脚踝",
             "min_value": 90,
-            "node_a": "右髋",
-            "node_b": "右膝",
-            "rule_dim": "关节间",
+            "max_value": 100
+        },
+        {
             "rule_no": "R4",
+            "rule_type": "夹角",
+            "rule_dim": "线段夹角",
             "rule_ref": "无",
-            "rule_type": "夹角"
+            "p1": "右髋",
+            "p2": "右膝",
+            "p3": "右膝",
+            "p4": "右脚踝",
+            "min_value": 90,
+            "max_value": 100
         },
         {
-            "max_value": 180,
-            "min_value": 175,
-            "node_a": "左髋",
-            "node_b": "左膝",
-            "rule_dim": "关节间",
             "rule_no": "R5",
+            "rule_type": "夹角",
+            "rule_dim": "线段夹角",
             "rule_ref": "无",
-            "rule_type": "夹角"
+            "p1": "左髋",
+            "p2": "左膝",
+            "p3": "左膝",
+            "p4": "左脚踝",
+            "min_value": 175,
+            "max_value": 180
         },
         {
-            "max_value": 179,
-            "min_value": 175,
-            "node_a": "右髋",
-            "node_b": "右膝",
-            "rule_dim": "关节间",
             "rule_no": "R6",
+            "rule_type": "夹角",
+            "rule_dim": "线段夹角",
             "rule_ref": "无",
-            "rule_type": "夹角"
+            "p1": "右髋",
+            "p2": "右膝",
+            "p3": "右膝",
+            "p4": "右脚踝",
+            "min_value": 175,
+            "max_value": 180
         }
     ]
 }

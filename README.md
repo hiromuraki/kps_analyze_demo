@@ -4,11 +4,18 @@
 
 ## 快速开始
 
+**开发环境（预录视频，此处指定视频为 ./sample_data/video_39.mp4）：**
+
 ```bash
-# 开发机（预录视频，此处指定视频为 ./sample_data/video_39.mp4）
 python main.py --analyzer default --camera -1 --video-path ./sample_data/video_39.mp4
 
-# 目标机（真实摄像头，此处指定摄像头序号为0，摄像头序号需要视实际需要更改）
+# 或者使用 uv + mock 分析器（给出固定 3D 骨骼信息，用于流程预览）
+uv run main.py --analyzer mock --camera -1 --video-path ./sample_data/video_39.mp4
+```
+
+**实机环境（真实摄像头，此处指定摄像头序号为0，摄像头序号需要视实际需要更改）：**
+
+```bash
 python main.py --analyzer default --camera 0 --width 640 --height 480 --fps 30
 ```
 

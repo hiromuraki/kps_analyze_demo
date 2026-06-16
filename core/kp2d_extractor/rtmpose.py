@@ -1,6 +1,7 @@
 from __future__ import annotations
 from pathlib import Path
 from typing import Literal
+from .interface import I2dPoseExtractor
 import sys
 import numpy as np
 import logging
@@ -24,43 +25,6 @@ def _ensure_rtm_imports() -> None:
     if str(_RTM_DET_DIR) not in sys.path:
         sys.path.insert(0, str(_RTM_DET_DIR))
     _rtm_imported = True
-
-
-class I2dPoseExtractor:
-    @property
-    def data_out(self) -> Literal["COCO17", "H36M"]:
-        raise NotImplementedError
-
-    def extract(self, frame: np.ndarray) -> np.ndarray:
-        raise NotImplementedError
-
-
-class Mock2dExtractor(I2dPoseExtractor):
-    def __init__(self):
-        self._kps_npz = np.load("./sample_data/example_2d_h36m_kps.npz")
-        self._kps_frames: np.ndarray = self._kps_npz[self._kps_npz.files[0]]  # (Frames, 17, 3)
-        self._kps_frame_count = self._kps_frames.shape[0]
-        self._frame_index = 0
-        logger.info(f"Loaded 2D keypoints: {self._kps_frames.shape}")
-
-    @property
-    def data_out(self) -> Literal["COCO17", "H36M"]:
-        return "H36M"
-
-    def extract(self, frame: np.ndarray) -> np.ndarray:
-        """
-        从输入帧中提取 2D 关键点。
-
-        Args:
-            frame: BGR 图像，shape=(H, W, 3)，dtype=uint8，值域 [0, 255]。
-
-        Returns:
-            关键点数组，shape=(17, 2)，每行 [x, y]。
-        """
-
-        kps = self._kps_frames[self._frame_index]
-        self._frame_index = (self._frame_index + 1) % self._kps_frame_count
-        return kps
 
 
 class RTMPose2dPoseExtractor(I2dPoseExtractor):

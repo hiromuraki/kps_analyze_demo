@@ -18,6 +18,7 @@ from core import (
     RTMPose2dPoseExtractor,
     MHFormer3dPoseReconstructor,
     get_rule_names,
+    load_rule,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -66,18 +67,24 @@ def video_source_factory(camera_id: int) -> IRgbVideoSource:
         raise ValueError(f"Unsupported camera index: {camera_id} (should be -1 for mock or >=0 for real camera)")
 
 
-def frame_analyzer_factory(mode: Literal["mock", "default"]) -> FrameAnalyzer:
+def frame_analyzer_factory(mode: Literal["mock", "default"], pose_type: str) -> FrameAnalyzer:
+    pose_rule = load_rule(pose_type)
+
     if mode == "mock":
         logger.info("Using Mock FrameAnalyzer with preloaded 2D keypoints and dummy 3D reconstructor")
         return FrameAnalyzer(
-            kp2d_extractor=Mock2dExtractor(),
-            kp3d_reconstructor=Mock3dReconstructor(),
+            kp2d_extractor=Mock2dExtractor("./sample_data/small/example_2d_h36m_kps.npz"),
+            kp3d_reconstructor=Mock3dReconstructor("./sample_data/small/example_3d_kps.npz"),
+            pose_name=pose_type,
+            pose_rule=pose_rule,
         )
     elif mode == "default":
         logger.info("Using default FrameAnalyzer with RTMPose 2D extractor and MHFormer 3D reconstructor")
         return FrameAnalyzer(
             kp2d_extractor=RTMPose2dPoseExtractor(),
             kp3d_reconstructor=MHFormer3dPoseReconstructor(),
+            pose_name=pose_type,
+            pose_rule=pose_rule,
         )
 
 
@@ -118,7 +125,7 @@ async def websocket_endpoint(ws: WebSocket):
         logger.error("Failed to open video source")
         await ws.close(code=1011, reason="Cannot open source")
         return
-    frame_analyzer = frame_analyzer_factory(args.analyzer)
+    frame_analyzer = frame_analyzer_factory(args.analyzer, selected_pose)
 
     # 进入主循环，捕获、分析并发送视频帧
     logger.info(f"Streaming started: {camera.width}x{camera.height}@{camera.fps:.0f}fps")
@@ -129,9 +136,13 @@ async def websocket_endpoint(ws: WebSocket):
         while camera.is_open():
             t0 = time.monotonic()
 
+            # 检测动作切换，重建 FrameAnalyzer
+            if frame_analyzer.pose_name != selected_pose:
+                frame_analyzer = frame_analyzer_factory(args.analyzer, selected_pose)
+
             # 捕获当前帧并进行分析
             frame = camera.get_frame()
-            rendered_frame, keypoints_3d, violated_rule_id_set = frame_analyzer.analyze_frame(frame, selected_pose)
+            rendered_frame, keypoints_3d, violated_rule_id_set = frame_analyzer.analyze_frame(frame)
             if violated_rule_id_set:
                 msg = json.dumps(
                     {"type": "log", "ts": datetime.now().strftime("%H:%M:%S"), "text": ";".join(violated_rule_id_set)}

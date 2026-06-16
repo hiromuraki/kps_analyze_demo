@@ -1,6 +1,7 @@
 from __future__ import annotations
-import logging
 from pathlib import Path
+from .interface import I3dPoseReconstructor
+import logging
 import sys
 import numpy as np
 
@@ -22,43 +23,6 @@ def _ensure_mhformer_imports() -> None:
     if str(_MHFORMER_DIR) not in sys.path:
         sys.path.insert(0, str(_MHFORMER_DIR))
     _mhformer_imported = True
-
-
-class I3dPoseReconstructor:
-    @property
-    def data_out(self) -> str:
-        raise NotImplementedError
-
-    def reconstruct(self, kps2d_seq: np.ndarray, frame_index: int) -> np.ndarray:
-        raise NotImplementedError
-
-
-class Mock3dReconstructor(I3dPoseReconstructor):
-    def __init__(self):
-        self._kps_npz = np.load("./sample_data/example_3d_kps.npz")
-        self._kps_frames: np.ndarray = self._kps_npz[self._kps_npz.files[0]]  # (Frames, 17, 3)
-        self._kps_frame_count = self._kps_frames.shape[0]
-        self._frame_index = 0
-        logger.info(f"Loaded 3D keypoints: {self._kps_frames.shape}")
-
-    @property
-    def data_out(self) -> str:
-        return "h36m_3d"
-
-    def reconstruct(self, kps2d_seq: np.ndarray, frame_index: int) -> np.ndarray:
-        """
-        从 2D 关键点序列重建 3D 骨骼点。
-
-        Args:
-            kps2d_seq: 2D 关键点序列, shape=(T, 17, 2)，每行 [x, y]。
-                T 是提供给 MHFormer 的时间维度长度，最大取决于模型需求，不足自动补齐。
-
-        Returns:
-            返回第 frame_index 帧的重建结果
-        """
-        kps = self._kps_frames[self._frame_index]
-        self._frame_index = (self._frame_index + 1) % self._kps_frame_count
-        return kps
 
 
 class MHFormer3dPoseReconstructor(I3dPoseReconstructor):
