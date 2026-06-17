@@ -72,9 +72,12 @@ class FrameAnalyzer:
         self._kp3d_reconstructor = kp3d_reconstructor
         self._pose_name = pose_name
         self._rule = pose_rule
-        # 用于存储历史帧的骨骼数据，供 MHFormer 重建 3D 骨骼时作为临近帧使用。
-        # 实际只需要 176 帧，不过多的一点消耗影响不大，保持数值一致性更容易理解意图
         self._frame_buffer = deque[np.ndarray](maxlen=351)
+        # 跳帧缓存
+        self._do_heavy = True  # 交替：True=完整分析, False=仅2D+缓存
+        self._cached_3d: np.ndarray = np.zeros((17, 3), dtype=np.float32)
+        self._cached_violations: list[str] = []
+        self._cached_alert_indices: list[int] = []
 
     @property
     def pose_name(self) -> str:
@@ -95,32 +98,32 @@ class FrameAnalyzer:
             2: 触发的违反规则的 ID 列表，如 ['R1', 'R2']，用于前端展示告警信息。
         """
 
-        # 分析过程
-        # 1. 使用 RTMPose 从帧中提取 2D 骨骼点，输出为 H36M 格式
-        # 2. 使用 MHFormer 重建出 3D 骨骼点
-        # 3. 根据 3D 骨骼点计算出需要告警的关键点
-        # 4. 将 3D 骨骼得出的关键点部位反向映射到 2D 骨骼点上，得到需要告警的 2D 骨骼点索引列表
-        # 5. 绘制 2D 骨骼连线到帧上，告警点及其关联骨骼使用高亮颜色，作为返回结果
+        # 2D 提取每帧都做，并追加到历史缓冲区
         kp2d_coco17 = self._kp2d_extractor.extract(frame)
         if self._kp2d_extractor.data_out == "COCO17":
             kp2d_h36m = DataConverter.coco17_to_h36m(kp2d_coco17)
-        elif self._kp2d_extractor.data_out == "H36M":
+        else:  # "H36M"
             kp2d_h36m = kp2d_coco17
-
         self._frame_buffer.append(kp2d_h36m)
 
-        kps_3d = self._kp3d_reconstructor.reconstruct(
-            np.stack(list(self._frame_buffer)),
-            frame_index=-1,
-        )  # out: (17, 3)，取当前帧（-1）的 3D 重建结果
+        self._do_heavy = not self._do_heavy
 
-        violated_rule_id_set, affected_keypoints = judge_pose(kps_3d, self._rule)
+        if self._do_heavy:
+            # 重型帧：3D 重建 + 姿态判定 → 更新缓存
+            kps_3d = self._kp3d_reconstructor.reconstruct(
+                np.stack(list(self._frame_buffer)), frame_index=-1
+            )
+            violated_rule_id_set, affected_keypoints = judge_pose(kps_3d, self._rule)
+            alert_kps_2d = _map_kp_names_to_indices(affected_keypoints)
 
-        # 反向映射：关节点名称 → H36M 索引 (0-16)
-        alert_kps_2d = _map_kp_names_to_indices(affected_keypoints)
-        logger.debug(f"错误的 3D 关节点：({affected_keypoints}), 对应的 2D 点：{alert_kps_2d}")
+            self._cached_3d = kps_3d
+            self._cached_violations = violated_rule_id_set
+            self._cached_alert_indices = alert_kps_2d
+        else:
+            # 轻量帧：复用缓存
+            kps_3d = self._cached_3d
+            violated_rule_id_set = self._cached_violations
+            alert_kps_2d = self._cached_alert_indices
 
-        # 渲染结果
         rendered_frame = H36M2dKeypointsRenderer.render_on_frame(frame, kp2d_h36m, alert_kps_2d)
-
         return rendered_frame, kps_3d, violated_rule_id_set
