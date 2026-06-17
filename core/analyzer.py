@@ -75,7 +75,7 @@ class FrameAnalyzer:
         self._frame_buffer = deque[np.ndarray](maxlen=351)
         # 跳帧缓存
         self._do_heavy = True
-        self._cached_2d_h36m: np.ndarray = np.zeros((17, 3), dtype=np.float32)
+        self._cached_2d_h36m: np.ndarray = np.zeros((17, 2), dtype=np.float32)
         self._cached_3d: np.ndarray = np.zeros((17, 3), dtype=np.float32)
         self._cached_violations: list[str] = []
         self._cached_alert_indices: list[int] = []
