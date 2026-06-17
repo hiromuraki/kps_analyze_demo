@@ -122,6 +122,7 @@ async def websocket_endpoint(ws: WebSocket):
         await ws.close(code=1011, reason="Cannot open source")
         return
     frame_analyzer = frame_analyzer_factory(args.analyzer_2d, args.analyzer_3d, selected_pose)
+    frame_analyzer.start_3d_pipeline()
 
     # 进入主循环，捕获、分析并发送视频帧
     logger.info(f"Streaming started: {camera.width}x{camera.height}@{camera.fps:.0f}fps")
@@ -140,22 +141,27 @@ async def websocket_endpoint(ws: WebSocket):
 
             # 检测动作切换，重建 FrameAnalyzer
             if frame_analyzer.pose_name != selected_pose:
+                frame_analyzer.stop_3d_pipeline()
                 frame_analyzer = frame_analyzer_factory(args.analyzer_2d, args.analyzer_3d, selected_pose)
+                frame_analyzer.start_3d_pipeline()
 
             # (1) 捕获帧
             t = time.monotonic()
             frame = camera.get_frame()
             total_capture_ms += (time.monotonic() - t) * 1000
 
-            # (2) 分析
+            # (2) 2D 分析 + 骨骼渲染
             t = time.monotonic()
-            rendered_frame, keypoints_3d, violated_rule_id_set = frame_analyzer.analyze_frame(frame)
+            rendered_frame = frame_analyzer.analyze_frame(frame)
             total_analysis_ms += (time.monotonic() - t) * 1000
 
-            if violated_rule_id_set:
-                msg = json.dumps(
-                    {"type": "log", "ts": datetime.now().strftime("%H:%M:%S"), "text": ";".join(violated_rule_id_set)}
-                )
+            # (3) 清空分析结果队列，推送违规消息
+            for rule_ids in frame_analyzer.drain_results():
+                msg = json.dumps({
+                    "type": "log",
+                    "ts": datetime.now().strftime("%H:%M:%S"),
+                    "text": ";".join(rule_ids),
+                })
                 await ws.send_text(msg)
 
             # 首帧用于诊断
@@ -163,20 +169,22 @@ async def websocket_endpoint(ws: WebSocket):
                 logger.info(f"First frame: shape={frame.shape}, mean_pixel={frame.mean():.1f}")
             frame_count += 1
 
-            # (3) JPEG 编码
+            # (4) JPEG 编码
             t = time.monotonic()
             _, buffer = cv2.imencode(".jpg", rendered_frame, [cv2.IMWRITE_JPEG_QUALITY, 50])
             total_encode_ms += (time.monotonic() - t) * 1000
 
-            # (4) 发送视频帧
+            # (5) 发送视频帧
             t = time.monotonic()
             await ws.send_bytes(buffer.tobytes())
             total_ws_video_ms += (time.monotonic() - t) * 1000
 
-            # (5) 发送 3D 骨骼数据
+            # (6) 发送最新 3D 骨骼数据
             t = time.monotonic()
-            kps3d_msg = json.dumps({"type": "kps3d", "data": keypoints_3d.tolist()})
-            await ws.send_text(kps3d_msg)
+            kps3d = frame_analyzer.latest_3d_kps
+            if kps3d is not None:
+                kps3d_msg = json.dumps({"type": "kps3d", "data": kps3d.tolist()})
+                await ws.send_text(kps3d_msg)
             total_ws_3d_ms += (time.monotonic() - t) * 1000
 
             await asyncio.sleep(max(0, frame_interval - (time.monotonic() - t_frame)))
@@ -187,6 +195,7 @@ async def websocket_endpoint(ws: WebSocket):
     except Exception:
         logger.exception("Unexpected error in streaming loop")
     finally:
+        frame_analyzer.stop_3d_pipeline()
         wall_elapsed = time.monotonic() - wall_start
         camera.release()
 
