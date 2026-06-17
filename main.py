@@ -1,5 +1,4 @@
 from __future__ import annotations
-from typing import Literal
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -25,7 +24,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger("main")
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--analyzer", choices=["mock", "default"], default="default")
+parser.add_argument("--analyzer-2d", choices=["mock", "rtmpose"], default="rtmpose")
+parser.add_argument("--analyzer-3d", choices=["mock", "mhformer"], default="mhformer")
 parser.add_argument("--camera", type=int, default=None, help="Camera device index")
 parser.add_argument("--width", type=int, default=640, help="Camera capture width")
 parser.add_argument("--height", type=int, default=480, help="Camera capture height")
@@ -63,25 +63,25 @@ def video_source_factory(camera_id: int | None) -> IRgbVideoSource:
     return video_source
 
 
-def frame_analyzer_factory(mode: Literal["mock", "default"], pose_type: str) -> FrameAnalyzer:
+def frame_analyzer_factory(mode_2d: str, mode_3d: str, pose_type: str) -> FrameAnalyzer:
     pose_rule = load_rule(pose_type)
 
-    if mode == "mock":
-        logger.info("Using Mock FrameAnalyzer with preloaded 2D keypoints and dummy 3D reconstructor")
-        return FrameAnalyzer(
-            kp2d_extractor=Mock2dExtractor("./sample_data/small/example_2d_h36m_kps.npz"),
-            kp3d_reconstructor=Mock3dReconstructor("./sample_data/small/example_3d_kps.npz"),
-            pose_name=pose_type,
-            pose_rule=pose_rule,
-        )
-    elif mode == "default":
-        logger.info("Using default FrameAnalyzer with RTMPose 2D extractor and MHFormer 3D reconstructor")
-        return FrameAnalyzer(
-            kp2d_extractor=RTMPose2dPoseExtractor(),
-            kp3d_reconstructor=MHFormer3dPoseReconstructor(),
-            pose_name=pose_type,
-            pose_rule=pose_rule,
-        )
+    kp2d = (
+        RTMPose2dPoseExtractor() if mode_2d == "rtmpose"
+        else Mock2dExtractor("./sample_data/small/example_2d_h36m_kps.npz")
+    )
+    kp3d = (
+        MHFormer3dPoseReconstructor() if mode_3d == "mhformer"
+        else Mock3dReconstructor("./sample_data/small/example_3d_kps.npz")
+    )
+    logger.info(f"FrameAnalyzer: 2D={mode_2d}, 3D={mode_3d}, pose={pose_type}")
+
+    return FrameAnalyzer(
+        kp2d_extractor=kp2d,
+        kp3d_reconstructor=kp3d,
+        pose_name=pose_type,
+        pose_rule=pose_rule,
+    )
 
 
 AVAILABLE_POSES = get_rule_names()
@@ -121,7 +121,7 @@ async def websocket_endpoint(ws: WebSocket):
         logger.error(f"Failed to open video source (camera={args.camera}, video_path={args.video_path})")
         await ws.close(code=1011, reason="Cannot open source")
         return
-    frame_analyzer = frame_analyzer_factory(args.analyzer, selected_pose)
+    frame_analyzer = frame_analyzer_factory(args.analyzer_2d, args.analyzer_3d, selected_pose)
 
     # 进入主循环，捕获、分析并发送视频帧
     logger.info(f"Streaming started: {camera.width}x{camera.height}@{camera.fps:.0f}fps")
@@ -140,7 +140,7 @@ async def websocket_endpoint(ws: WebSocket):
 
             # 检测动作切换，重建 FrameAnalyzer
             if frame_analyzer.pose_name != selected_pose:
-                frame_analyzer = frame_analyzer_factory(args.analyzer, selected_pose)
+                frame_analyzer = frame_analyzer_factory(args.analyzer_2d, args.analyzer_3d, selected_pose)
 
             # (1) 捕获帧
             t = time.monotonic()
