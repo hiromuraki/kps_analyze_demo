@@ -18,7 +18,7 @@ class Mock2dExtractor(I2dPoseExtractor):
 
     @property
     def data_out(self) -> Literal["COCO17", "H36M"]:
-        return "H36M"
+        return "COCO17"
 
     def extract(self, frame: np.ndarray) -> np.ndarray:
         """
