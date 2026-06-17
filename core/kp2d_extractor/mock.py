@@ -11,7 +11,11 @@ logger = logging.getLogger("kp2d_extractor")
 class Mock2dExtractor(I2dPoseExtractor):
     def __init__(self, preset_2d_h36m_kps_file: Path | str):
         self._kps_npz = np.load(preset_2d_h36m_kps_file)
-        self._kps_frames: np.ndarray = self._kps_npz[self._kps_npz.files[0]]  # (Frames, 17, 3)
+        raw = self._kps_npz[self._kps_npz.files[0]]
+        # 兼容 (Frames, 17, 3) 和 (1, Frames, 17, 3) 两种 shape
+        if raw.ndim == 4:
+            raw = raw[0]
+        self._kps_frames: np.ndarray = raw  # (Frames, 17, 3)
         self._kps_frame_count = self._kps_frames.shape[0]
         self._frame_index = 0
         logger.info(f"Loaded 2D keypoints: {self._kps_frames.shape}")
@@ -28,9 +32,8 @@ class Mock2dExtractor(I2dPoseExtractor):
             frame: BGR 图像，shape=(H, W, 3)，dtype=uint8，值域 [0, 255]。
 
         Returns:
-            关键点数组，shape=(17, 2)，每行 [x, y]。
+            关键点数组，shape=(17, 3)，每行 [x, y, conf]。
         """
-
         kps = self._kps_frames[self._frame_index]
         self._frame_index = (self._frame_index + 1) % self._kps_frame_count
         return kps
