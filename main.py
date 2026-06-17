@@ -130,11 +130,14 @@ async def websocket_endpoint(ws: WebSocket):
     # 进入主循环，捕获、分析并发送视频帧
     logger.info(f"Streaming started: {camera.width}x{camera.height}@{camera.fps:.0f}fps")
     frame_count = 0
+    wall_start = time.monotonic()
+    total_analysis_ms = 0.0
+    total_encode_ms = 0.0
 
     try:
         frame_interval = 1.0 / camera.fps
         while camera.is_open():
-            t0 = time.monotonic()
+            t_frame = time.monotonic()
 
             # 检测动作切换，重建 FrameAnalyzer
             if frame_analyzer.pose_name != selected_pose:
@@ -142,7 +145,10 @@ async def websocket_endpoint(ws: WebSocket):
 
             # 捕获当前帧并进行分析
             frame = camera.get_frame()
+            t_ana = time.monotonic()
             rendered_frame, keypoints_3d, violated_rule_id_set = frame_analyzer.analyze_frame(frame)
+            total_analysis_ms += (time.monotonic() - t_ana) * 1000
+
             if violated_rule_id_set:
                 msg = json.dumps(
                     {"type": "log", "ts": datetime.now().strftime("%H:%M:%S"), "text": ";".join(violated_rule_id_set)}
@@ -155,22 +161,41 @@ async def websocket_endpoint(ws: WebSocket):
             frame_count += 1
 
             # 发送视频帧
+            t_enc = time.monotonic()
             _, buffer = cv2.imencode(".jpg", rendered_frame, [cv2.IMWRITE_JPEG_QUALITY, 50])
+            total_encode_ms += (time.monotonic() - t_enc) * 1000
             await ws.send_bytes(buffer.tobytes())
 
             # 发送 3D 骨骼数据
             kps3d_msg = json.dumps({"type": "kps3d", "data": keypoints_3d.tolist()})
             await ws.send_text(kps3d_msg)
 
-            elapsed = time.monotonic() - t0
-            await asyncio.sleep(max(0, frame_interval - elapsed))
+            await asyncio.sleep(max(0, frame_interval - (time.monotonic() - t_frame)))
     except WebSocketDisconnect:
         logger.info("Client disconnected")
     except RuntimeError as e:
         logger.error(f"Runtime error in streaming loop: {e}")
     finally:
-        logger.info(f"Streaming ended, {frame_count} frames sent")
+        wall_elapsed = time.monotonic() - wall_start
         camera.release()
+
+        if frame_count == 0:
+            logger.info("No frames processed")
+            return
+
+        avg_total = (wall_elapsed / frame_count) * 1000
+        avg_ana = total_analysis_ms / frame_count
+        avg_enc = total_encode_ms / frame_count
+
+        logger.info("=" * 55)
+        logger.info("  Per‑frame Timing Summary")
+        logger.info("=" * 55)
+        logger.info(f"  Total wall time              {wall_elapsed:8.2f} s")
+        logger.info(f"  Total frames                 {frame_count:8d}")
+        logger.info(f"  Avg per frame (wall)         {avg_total:8.2f} ms")
+        logger.info(f"  Avg per frame (analysis)     {avg_ana:8.2f} ms")
+        logger.info(f"  Avg per frame (JPEG encode)  {avg_enc:8.2f} ms")
+        logger.info("=" * 55)
 
 
 if __name__ == "__main__":
