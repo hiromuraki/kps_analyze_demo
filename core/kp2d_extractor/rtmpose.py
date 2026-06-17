@@ -6,7 +6,7 @@ import sys
 import numpy as np
 import logging
 
-_project_root = Path(__file__).resolve().parent.parent
+_project_root = Path(__file__).resolve().parent.parent.parent
 
 _RTM_DET_DIR = _project_root / "rtm-det-aidlite"
 _DEFAULT_DET_MODEL = str(_RTM_DET_DIR / "qnnout" / "rtmdet_m_raw_qcs8550_fp16.qnn236.ctx.bin.aidem")

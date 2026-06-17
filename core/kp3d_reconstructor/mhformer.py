@@ -5,7 +5,7 @@ import logging
 import sys
 import numpy as np
 
-_project_root = Path(__file__).resolve().parent.parent
+_project_root = Path(__file__).resolve().parent.parent.parent
 
 _MHFORMER_DIR = _project_root / "mhformer-aidlite"
 _DEFAULT_MODEL_DIR = str(_MHFORMER_DIR / "qnnmodel")
