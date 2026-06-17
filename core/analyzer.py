@@ -74,7 +74,8 @@ class FrameAnalyzer:
         self._rule = pose_rule
         self._frame_buffer = deque[np.ndarray](maxlen=351)
         # 跳帧缓存
-        self._do_heavy = True  # 交替：True=完整分析, False=仅2D+缓存
+        self._do_heavy = True
+        self._cached_2d_h36m: np.ndarray = np.zeros((17, 3), dtype=np.float32)
         self._cached_3d: np.ndarray = np.zeros((17, 3), dtype=np.float32)
         self._cached_violations: list[str] = []
         self._cached_alert_indices: list[int] = []
@@ -98,29 +99,31 @@ class FrameAnalyzer:
             2: 触发的违反规则的 ID 列表，如 ['R1', 'R2']，用于前端展示告警信息。
         """
 
-        # 2D 提取每帧都做，并追加到历史缓冲区
-        kp2d_coco17 = self._kp2d_extractor.extract(frame)
-        if self._kp2d_extractor.data_out == "COCO17":
-            kp2d_h36m = DataConverter.coco17_to_h36m(kp2d_coco17)
-        else:  # "H36M"
-            kp2d_h36m = kp2d_coco17
-        self._frame_buffer.append(kp2d_h36m)
-
         self._do_heavy = not self._do_heavy
 
         if self._do_heavy:
-            # 重型帧：3D 重建 + 姿态判定 → 更新缓存
+            # 重型帧：2D 提取 + 3D 重建 + 姿态判定 → 全部更新缓存
+            kp2d_coco17 = self._kp2d_extractor.extract(frame)
+            if self._kp2d_extractor.data_out == "COCO17":
+                kp2d_h36m = DataConverter.coco17_to_h36m(kp2d_coco17)
+            else:
+                kp2d_h36m = kp2d_coco17
+            self._frame_buffer.append(kp2d_h36m)
+
             kps_3d = self._kp3d_reconstructor.reconstruct(
                 np.stack(list(self._frame_buffer)), frame_index=-1
             )
             violated_rule_id_set, affected_keypoints = judge_pose(kps_3d, self._rule)
             alert_kps_2d = _map_kp_names_to_indices(affected_keypoints)
 
+            self._cached_2d_h36m = kp2d_h36m
             self._cached_3d = kps_3d
             self._cached_violations = violated_rule_id_set
             self._cached_alert_indices = alert_kps_2d
         else:
-            # 轻量帧：复用缓存
+            # 轻量帧：全部复用缓存，仅追加一份 2D 缓存到缓冲区（维持 MHFormer 窗口连续性）
+            kp2d_h36m = self._cached_2d_h36m
+            self._frame_buffer.append(kp2d_h36m)
             kps_3d = self._cached_3d
             violated_rule_id_set = self._cached_violations
             alert_kps_2d = self._cached_alert_indices
