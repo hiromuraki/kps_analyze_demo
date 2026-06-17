@@ -127,8 +127,11 @@ async def websocket_endpoint(ws: WebSocket):
     logger.info(f"Streaming started: {camera.width}x{camera.height}@{camera.fps:.0f}fps")
     frame_count = 0
     wall_start = time.monotonic()
+    total_capture_ms = 0.0
     total_analysis_ms = 0.0
     total_encode_ms = 0.0
+    total_ws_video_ms = 0.0
+    total_ws_3d_ms = 0.0
 
     try:
         frame_interval = 1.0 / camera.fps
@@ -139,11 +142,15 @@ async def websocket_endpoint(ws: WebSocket):
             if frame_analyzer.pose_name != selected_pose:
                 frame_analyzer = frame_analyzer_factory(args.analyzer, selected_pose)
 
-            # 捕获当前帧并进行分析
+            # (1) 捕获帧
+            t = time.monotonic()
             frame = camera.get_frame()
-            t_ana = time.monotonic()
+            total_capture_ms += (time.monotonic() - t) * 1000
+
+            # (2) 分析
+            t = time.monotonic()
             rendered_frame, keypoints_3d, violated_rule_id_set = frame_analyzer.analyze_frame(frame)
-            total_analysis_ms += (time.monotonic() - t_ana) * 1000
+            total_analysis_ms += (time.monotonic() - t) * 1000
 
             if violated_rule_id_set:
                 msg = json.dumps(
@@ -156,15 +163,21 @@ async def websocket_endpoint(ws: WebSocket):
                 logger.info(f"First frame: shape={frame.shape}, mean_pixel={frame.mean():.1f}")
             frame_count += 1
 
-            # 发送视频帧
-            t_enc = time.monotonic()
+            # (3) JPEG 编码
+            t = time.monotonic()
             _, buffer = cv2.imencode(".jpg", rendered_frame, [cv2.IMWRITE_JPEG_QUALITY, 50])
-            total_encode_ms += (time.monotonic() - t_enc) * 1000
-            await ws.send_bytes(buffer.tobytes())
+            total_encode_ms += (time.monotonic() - t) * 1000
 
-            # 发送 3D 骨骼数据
+            # (4) 发送视频帧
+            t = time.monotonic()
+            await ws.send_bytes(buffer.tobytes())
+            total_ws_video_ms += (time.monotonic() - t) * 1000
+
+            # (5) 发送 3D 骨骼数据
+            t = time.monotonic()
             kps3d_msg = json.dumps({"type": "kps3d", "data": keypoints_3d.tolist()})
             await ws.send_text(kps3d_msg)
+            total_ws_3d_ms += (time.monotonic() - t) * 1000
 
             await asyncio.sleep(max(0, frame_interval - (time.monotonic() - t_frame)))
     except WebSocketDisconnect:
@@ -181,19 +194,30 @@ async def websocket_endpoint(ws: WebSocket):
             logger.info("No frames processed")
             return
 
-        avg_total = (wall_elapsed / frame_count) * 1000
-        avg_ana = total_analysis_ms / frame_count
-        avg_enc = total_encode_ms / frame_count
+        avg_total   = (wall_elapsed / frame_count) * 1000
+        avg_cap     = total_capture_ms / frame_count
+        avg_ana     = total_analysis_ms / frame_count
+        avg_enc     = total_encode_ms / frame_count
+        avg_ws_vid  = total_ws_video_ms / frame_count
+        avg_ws_3d   = total_ws_3d_ms / frame_count
+        avg_other   = avg_total - (avg_cap + avg_ana + avg_enc + avg_ws_vid + avg_ws_3d)
 
-        logger.info("=" * 55)
+        logger.info("=" * 60)
         logger.info("  Per‑frame Timing Summary")
-        logger.info("=" * 55)
-        logger.info(f"  Total wall time              {wall_elapsed:8.2f} s")
-        logger.info(f"  Total frames                 {frame_count:8d}")
-        logger.info(f"  Avg per frame (wall)         {avg_total:8.2f} ms")
-        logger.info(f"  Avg per frame (analysis)     {avg_ana:8.2f} ms")
-        logger.info(f"  Avg per frame (JPEG encode)  {avg_enc:8.2f} ms")
-        logger.info("=" * 55)
+        logger.info("=" * 60)
+        logger.info(f"  Total wall time                {wall_elapsed:8.2f} s")
+        logger.info(f"  Total frames                   {frame_count:8d}")
+        logger.info(f"  Effective FPS                  {frame_count / wall_elapsed:8.1f}")
+        logger.info("-" * 60)
+        logger.info(f"  Avg capture        (get_frame)  {avg_cap:8.2f} ms")
+        logger.info(f"  Avg analysis       (analyze)    {avg_ana:8.2f} ms")
+        logger.info(f"  Avg JPEG encode    (imencode)   {avg_enc:8.2f} ms")
+        logger.info(f"  Avg WS send        (video)      {avg_ws_vid:8.2f} ms")
+        logger.info(f"  Avg WS send        (3D data)    {avg_ws_3d:8.2f} ms")
+        logger.info(f"  Avg other          (sleep/etc)  {avg_other:8.2f} ms")
+        logger.info("-" * 60)
+        logger.info(f"  Avg per frame (total wall)      {avg_total:8.2f} ms")
+        logger.info("=" * 60)
 
 
 if __name__ == "__main__":
