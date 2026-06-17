@@ -37,34 +37,30 @@ app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
-def video_source_factory(camera_id: int) -> IRgbVideoSource:
-    def probe_cameras(max_index: int = 8) -> list[int]:
-        available = []
-        for i in range(max_index + 1):
-            cap = cv2.VideoCapture(i)
-            if cap.isOpened():
-                available.append(i)
-                cap.release()
-        return available
+def video_source_factory(camera_id: int | None) -> IRgbVideoSource:
+    """根据 camera_id 创建视频源。None=自动探测, -1=mock视频文件, >=0=真实摄像头。"""
+    if camera_id == -1:
+        logger.info(f"Using mock video source with video file: {args.video_path}")
+        return MockRgbVideoSource(args.video_path)
 
     if camera_id is None:
-        cameras = probe_cameras()
+        cameras: list[int] = []
+        for i in range(8 + 1):
+            cap = cv2.VideoCapture(i)
+            if cap.isOpened():
+                cameras.append(i)
+                cap.release()
         if cameras:
             logger.info(f"Available cameras: {cameras}")
             camera_id = cameras[0]
         else:
             logger.warning("No camera devices found, falling back to index 0")
             camera_id = 0
-    elif camera_id == -1:
-        logger.info(f"Using mock video source with video file: {args.video_path}")
-        return MockRgbVideoSource(args.video_path)
-    elif camera_id >= 0:
-        logger.info(f"Selected camera ID: {camera_id}")
-        video_source = CameraRgbVideoSource(camera_id=camera_id, width=args.width, height=args.height, fps=args.fps)
-        video_source.flip_x = True  # 前置摄像头通常需要水平翻转
-        return video_source
-    else:
-        raise ValueError(f"Unsupported camera index: {camera_id} (should be -1 for mock or >=0 for real camera)")
+
+    logger.info(f"Opening camera {camera_id}: {args.width}x{args.height}@{args.fps:.0f}fps")
+    video_source = CameraRgbVideoSource(camera_id=camera_id, width=args.width, height=args.height, fps=args.fps)
+    video_source.flip_x = True
+    return video_source
 
 
 def frame_analyzer_factory(mode: Literal["mock", "default"], pose_type: str) -> FrameAnalyzer:
@@ -122,7 +118,7 @@ async def websocket_endpoint(ws: WebSocket):
     # 构建视频源和帧分析器
     camera = video_source_factory(args.camera)
     if not camera.open():
-        logger.error("Failed to open video source")
+        logger.error(f"Failed to open video source (camera={args.camera}, video_path={args.video_path})")
         await ws.close(code=1011, reason="Cannot open source")
         return
     frame_analyzer = frame_analyzer_factory(args.analyzer, selected_pose)

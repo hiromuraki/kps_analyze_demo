@@ -43,14 +43,19 @@ class MockRgbVideoSource(IRgbVideoSource):
         self.__flip_y = value
 
     def open(self) -> bool:
+        import logging
+        logger = logging.getLogger("MockRgbVideoSource")
+        logger.info(f"Opening video file: {self._video_path}")
         self._cap = cv2.VideoCapture(self._video_path)
         if not self._cap.isOpened():
+            logger.error(f"Failed to open video file: {self._video_path}")
             return False
         self.__width = int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         self.__height = int(self._cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         self.__fps = self._cap.get(cv2.CAP_PROP_FPS)
         if self.__fps <= 0:
             self.__fps = 30.0
+        logger.info(f"Opened: {self.__width}x{self.__height}@{self.__fps:.0f}fps")
         return True
 
     def get_frame(self) -> np.ndarray:
