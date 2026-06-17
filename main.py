@@ -68,7 +68,7 @@ def frame_analyzer_factory(mode_2d: str, mode_3d: str, pose_type: str) -> FrameA
 
     kp2d = (
         RTMPose2dPoseExtractor() if mode_2d == "rtmpose"
-        else Mock2dExtractor("./sample_data/small/example_2d_h36m_kps.npz")
+        else Mock2dExtractor("./sample_data/small/example_2d_coco17_kps.npz")
     )
     kp3d = (
         MHFormer3dPoseReconstructor() if mode_3d == "mhformer"
