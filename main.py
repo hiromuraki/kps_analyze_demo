@@ -30,7 +30,7 @@ parser.add_argument("--camera", type=int, default=None, help="Camera device inde
 parser.add_argument("--width", type=int, default=640, help="Camera capture width")
 parser.add_argument("--height", type=int, default=480, help="Camera capture height")
 parser.add_argument("--fps", type=float, default=30.0, help="Camera capture FPS")
-parser.add_argument("--video-path", default="./sample_data/video_39.mp4")
+parser.add_argument("--video-path", default="./sample_data/small/example.mp4")
 args = parser.parse_args()
 
 app = FastAPI()
