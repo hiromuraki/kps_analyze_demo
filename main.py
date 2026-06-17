@@ -171,6 +171,8 @@ async def websocket_endpoint(ws: WebSocket):
         logger.info("Client disconnected")
     except RuntimeError as e:
         logger.error(f"Runtime error in streaming loop: {e}")
+    except Exception:
+        logger.exception("Unexpected error in streaming loop")
     finally:
         wall_elapsed = time.monotonic() - wall_start
         camera.release()

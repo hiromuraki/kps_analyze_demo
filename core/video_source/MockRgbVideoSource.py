@@ -55,6 +55,14 @@ class MockRgbVideoSource(IRgbVideoSource):
         self.__fps = self._cap.get(cv2.CAP_PROP_FPS)
         if self.__fps <= 0:
             self.__fps = 30.0
+        # 试读一帧确认解码器正常（生产机可能缺 ffmpeg）
+        ret, _ = self._cap.read()
+        if not ret:
+            logger.error(f"Failed to decode first frame: {self._video_path}")
+            self._cap.release()
+            self._cap = None
+            return False
+        self._cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
         logger.info(f"Opened: {self.__width}x{self.__height}@{self.__fps:.0f}fps")
         return True
 
