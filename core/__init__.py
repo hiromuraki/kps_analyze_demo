@@ -1,5 +1,5 @@
 from __future__ import annotations
-from .analyzer import FrameAnalyzer
+from .analyzer import AnalysisResult, FrameAnalyzer
 from .kp2d_extractor import Mock2dExtractor
 from .kp3d_reconstructor import Mock3dReconstructor
 from .rules_loader import get_rule_names, load_rule
@@ -15,6 +15,7 @@ except ImportError:
     MHFormer3dPoseReconstructor = None  # type: ignore[assignment]
 
 __all__ = [
+    "AnalysisResult",
     "FrameAnalyzer",
     "Mock2dExtractor",
     "RTMPose2dPoseExtractor",

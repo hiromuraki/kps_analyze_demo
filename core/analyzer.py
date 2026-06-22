@@ -1,15 +1,34 @@
 from __future__ import annotations
 from collections import deque
+from dataclasses import dataclass, field
+from enum import Enum, auto
 from collections.abc import Iterable
 from .kp2d_extractor import I2dPoseExtractor
 from .kp3d_reconstructor import I3dPoseReconstructor
 from .renderer import H36M2dKeypointsRenderer
 from .converter import DataConverter
-from .pose_judger import judge_pose
+from .pose_judger import (
+    judge_pose,
+    get_rep_ceiling,
+    get_rep_floor,
+    get_rep_feature_value,
+    get_rep_count_direction,
+)
 import numpy as np
 import logging
 
 logger = logging.getLogger("analyzer")
+
+
+@dataclass
+class AnalysisResult:
+    """analyze_frame 的返回结构。"""
+
+    rendered: np.ndarray  # 叠加 2D 骨骼后的 BGR 帧 (H, W, 3)
+    kps_3d: np.ndarray  # 3D 骨骼 (17, 3)
+    violations: list[str] = field(default_factory=list)  # 违规规则 ID
+    rep_counted: bool = False  # 本轮是否完成了一次动作计数
+
 
 # H36M 关节点名称 → 索引 (0-16)
 _H36M_NAME_TO_INDEX: dict[str, int] = {
@@ -60,6 +79,68 @@ def _map_kp_names_to_indices(names: Iterable[str]) -> list[int]:
     return indices
 
 
+class RepPhase(Enum):
+    UP = auto()  # 伸展态（站立 / 臂伸直）
+    DOWN = auto()  # 收缩态（蹲到底 / 曲臂）
+
+
+class RepCounter:
+    """
+    通用动作计数状态机。
+
+    依赖四个外部函数读取规则：
+    - get_rep_feature_value(kps_3d, rule) -> float
+    - get_rep_ceiling(rule) -> float
+    - get_rep_floor(rule) -> float
+    - get_rep_count_direction(rule) -> str
+    """
+
+    def __init__(self, rule: dict):
+        self._rule = rule
+        self._ceiling = get_rep_ceiling(rule)
+        self._floor = get_rep_floor(rule)
+        self._direction = get_rep_count_direction(rule)  # "down_up" | "up_down"
+        self._phase = RepPhase.UP
+        self._count = 0
+
+    # ------------------------------------------------------------------
+    @property
+    def count(self) -> int:
+        return self._count
+
+    @property
+    def phase(self) -> RepPhase:
+        return self._phase
+
+    # ------------------------------------------------------------------
+    def update(self, kps_3d: np.ndarray) -> bool:
+        """
+        输入一帧 3D 骨骼，更新状态机。
+
+        Returns:
+            True 当本帧完成了一次动作计数时。
+        """
+        value = get_rep_feature_value(kps_3d, self._rule)
+        prev = self._phase
+
+        if value >= self._ceiling:
+            self._phase = RepPhase.UP
+        elif value <= self._floor:
+            self._phase = RepPhase.DOWN
+
+        counted = False
+        if self._direction == "down_up":
+            if prev == RepPhase.DOWN and self._phase == RepPhase.UP:
+                self._count += 1
+                counted = True
+        else:  # "up_down"
+            if prev == RepPhase.UP and self._phase == RepPhase.DOWN:
+                self._count += 1
+                counted = True
+
+        return counted
+
+
 class FrameAnalyzer:
     def __init__(
         self,
@@ -72,15 +153,21 @@ class FrameAnalyzer:
         self._kp3d_reconstructor = kp3d_reconstructor
         self._pose_name = pose_name
         self._rule = pose_rule
-        # 用于存储历史帧的骨骼数据，供 MHFormer 重建 3D 骨骼时作为临近帧使用。
-        # 实际只需要 176 帧，不过多的一点消耗影响不大，保持数值一致性更容易理解意图
         self._frame_buffer = deque[np.ndarray](maxlen=351)
+        self._rep_counter: RepCounter | None = None
+        if "rep_counting" in pose_rule:
+            self._rep_counter = RepCounter(pose_rule)
 
     @property
     def pose_name(self) -> str:
         return self._pose_name
 
-    def analyze_frame(self, frame: np.ndarray) -> tuple[np.ndarray, np.ndarray, list[str]]:
+    @property
+    def rep_count(self) -> int:
+        """当前动作累计完成次数（无 rep_counting 配置时返回 0）。"""
+        return self._rep_counter.count if self._rep_counter is not None else 0
+
+    def analyze_frame(self, frame: np.ndarray) -> AnalysisResult:
         """
         对输入帧进行分析处理。
 
@@ -114,13 +201,20 @@ class FrameAnalyzer:
             frame_index=-1,
         )  # out: (17, 3)，取当前帧（-1）的 3D 重建结果
 
-        violated_rule_id_set, affected_keypoints = judge_pose(kps_3d, self._rule)
+        violations, affected_keypoints = judge_pose(kps_3d, self._rule)
+
+        # 动作计数
+        rep_counted = self._rep_counter is not None and self._rep_counter.update(kps_3d)
 
         # 反向映射：关节点名称 → H36M 索引 (0-16)
         alert_kps_2d = _map_kp_names_to_indices(affected_keypoints)
         logger.debug(f"错误的 3D 关节点：({affected_keypoints}), 对应的 2D 点：{alert_kps_2d}")
 
-        # 渲染结果
-        rendered_frame = H36M2dKeypointsRenderer.render_on_frame(frame, kp2d_h36m, alert_kps_2d)
+        rendered = H36M2dKeypointsRenderer.render_on_frame(frame, kp2d_h36m, alert_kps_2d)
 
-        return rendered_frame, kps_3d, violated_rule_id_set
+        return AnalysisResult(
+            rendered=rendered,
+            kps_3d=kps_3d,
+            violations=violations,
+            rep_counted=rep_counted,
+        )

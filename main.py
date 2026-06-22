@@ -11,6 +11,7 @@ import logging
 import time
 import cv2
 from core import (
+    AnalysisResult,
     FrameAnalyzer,
     Mock2dExtractor,
     Mock3dReconstructor,
@@ -149,14 +150,21 @@ async def websocket_endpoint(ws: WebSocket):
 
             # (2) 分析
             t = time.monotonic()
-            rendered_frame, keypoints_3d, violated_rule_id_set = frame_analyzer.analyze_frame(frame)
+            result = frame_analyzer.analyze_frame(frame)
             total_analysis_ms += (time.monotonic() - t) * 1000
 
-            if violated_rule_id_set:
+            if result.violations:
                 msg = json.dumps(
-                    {"type": "log", "ts": datetime.now().strftime("%H:%M:%S"), "text": ";".join(violated_rule_id_set)}
+                    {"type": "log", "ts": datetime.now().strftime("%H:%M:%S"), "text": ";".join(result.violations)}
                 )
                 await ws.send_text(msg)
+
+            if result.rep_counted:
+                rep_msg = json.dumps(
+                    {"type": "log", "ts": datetime.now().strftime("%H:%M:%S"),
+                     "text": f"rep:{frame_analyzer.rep_count}"}
+                )
+                await ws.send_text(rep_msg)
 
             # 首帧用于诊断
             if frame_count == 0:
@@ -165,7 +173,7 @@ async def websocket_endpoint(ws: WebSocket):
 
             # (3) JPEG 编码
             t = time.monotonic()
-            _, buffer = cv2.imencode(".jpg", rendered_frame, [cv2.IMWRITE_JPEG_QUALITY, 50])
+            _, buffer = cv2.imencode(".jpg", result.rendered, [cv2.IMWRITE_JPEG_QUALITY, 50])
             total_encode_ms += (time.monotonic() - t) * 1000
 
             # (4) 发送视频帧
@@ -175,7 +183,7 @@ async def websocket_endpoint(ws: WebSocket):
 
             # (5) 发送 3D 骨骼数据
             t = time.monotonic()
-            kps3d_msg = json.dumps({"type": "kps3d", "data": keypoints_3d.tolist()})
+            kps3d_msg = json.dumps({"type": "kps3d", "data": result.kps_3d.tolist()})
             await ws.send_text(kps3d_msg)
             total_ws_3d_ms += (time.monotonic() - t) * 1000
 
