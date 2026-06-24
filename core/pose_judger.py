@@ -2,26 +2,6 @@ import numpy as np
 import json
 
 
-def get_rep_feature_value(kps_3d: np.ndarray, rule: dict) -> float:
-    """从 3D 骨骼中提取当前帧的重复计数特征值。\n\n    kps_3d  : shape=(17, 3), H36M 格式 xyz 坐标，index 0-16。\n    rule    : 规则 JSON 的完整 dict（含 rep_counting 块）。\n    return  : 当前帧的特征标量值（角度=度数, 距离=原始单位）。\n"""
-    raise NotImplementedError
-
-
-def get_rep_ceiling(rule: dict) -> float:
-    """返回重复计数的上界阈值（特征值高于此判定为伸展态）。\n\n    rule    : 规则 JSON 的完整 dict。\n    return  : 上界阈值。\n"""
-    raise NotImplementedError
-
-
-def get_rep_floor(rule: dict) -> float:
-    """返回重复计数的下界阈值（特征值低于此判定为收缩态）。\n\n    rule    : 规则 JSON 的完整 dict。\n    return  : 下界阈值。\n"""
-    raise NotImplementedError
-
-
-def get_rep_count_direction(rule: dict) -> str:
-    """返回重复计数的触发方向。\n\n    rule    : 规则 JSON 的完整 dict。\n    return  : \"down_up\"（收缩→伸展 计一次）或 \"up_down\"（伸展→收缩 计一次）。\n"""
-    raise NotImplementedError
-
-
 def judge_pose(kp3d: np.ndarray, rule: dict) -> tuple[list[str], list[str]]:
     """
     根据规则对 3D 骨骼姿势进行判定，返回触发的规则 ID 和涉及的关节点。

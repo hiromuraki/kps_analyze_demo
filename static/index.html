@@ -47,7 +47,7 @@
   <div id="top">
     <div id="center"><img id="stream" alt="waiting for stream..." /></div>
     <div id="right">
-      <h3>Messages</h3>
+      <h3>动作计数 <span id="rep-count" style="color:#0f0;font-size:24px;float:right">0</span></h3>
       <div id="log"></div>
     </div>
   </div>
@@ -71,6 +71,7 @@
 // =========================================================================
 const img = document.getElementById("stream");
 const logEl = document.getElementById("log");
+const repEl = document.getElementById("rep-count");
 const ws = new WebSocket(`ws://${location.host}/ws`);
 ws.binaryType = "blob";
 
@@ -82,6 +83,9 @@ ws.onmessage = (e) => {
   } else {
     const msg = JSON.parse(e.data);
     if (msg.type === "log") {
+      if (msg.text.startsWith("rep:")) {
+        repEl.textContent = msg.text.slice(4);
+      }
       const div = document.createElement("div");
       div.className = "msg";
       div.innerHTML = `<span class="ts">${msg.ts}</span> ${msg.text}`;

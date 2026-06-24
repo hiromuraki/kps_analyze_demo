@@ -7,8 +7,8 @@ from .kp2d_extractor import I2dPoseExtractor
 from .kp3d_reconstructor import I3dPoseReconstructor
 from .renderer import H36M2dKeypointsRenderer
 from .converter import DataConverter
-from .pose_judger import (
-    judge_pose,
+from .pose_judger import judge_pose
+from .rep_counter import (
     get_rep_ceiling,
     get_rep_floor,
     get_rep_feature_value,

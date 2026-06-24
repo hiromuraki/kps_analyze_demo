@@ -74,5 +74,15 @@
             "min_value": 175,
             "max_value": 180
         }
-    ]
+    ],
+    "rep_counting": {
+        "type": "angle",
+        "p1": "左髋",
+        "p2": "左膝",
+        "p3": "左膝",
+        "p4": "左脚踝",
+        "top_threshold": 170,
+        "bottom_threshold": 100,
+        "count_on": "down_up"
+    }
 }

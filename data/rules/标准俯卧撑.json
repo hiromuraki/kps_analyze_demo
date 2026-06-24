@@ -50,5 +50,13 @@
             "min_value": 45,
             "max_value": 60
         }
-    ]
+    ],
+    "rep_counting": {
+        "type": "distance",
+        "p1": "胸腔",
+        "p2": "地面",
+        "top_threshold": 0.4,
+        "bottom_threshold": 0.1,
+        "count_on": "down_up"
+    }
 }
