@@ -84,5 +84,7 @@
         "top_threshold": 170,
         "bottom_threshold": 100,
         "count_on": "down_up"
-    }
+    },
+    "calories_per_rep": 0.5,
+    "balance_pairs": [["左膝","右膝"], ["左髋","右髋"]]
 }

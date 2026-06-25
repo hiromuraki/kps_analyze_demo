@@ -74,5 +74,7 @@
             "min_value": 170,
             "max_value": 180
         }
-    ]
+    ],
+    "calories_per_rep": 0.4,
+    "balance_pairs": [["左膝","右膝"], ["左髋","右髋"]]
 }

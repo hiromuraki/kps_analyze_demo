@@ -3,6 +3,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from core.video_source import CameraRgbVideoSource, MockRgbVideoSource, IRgbVideoSource
+from collections import deque
 from datetime import datetime
 import argparse
 import asyncio
@@ -87,6 +88,9 @@ def frame_analyzer_factory(mode_2d: str, mode_3d: str, pose_type: str) -> FrameA
 
 AVAILABLE_POSES = get_rule_names()
 selected_pose: str = AVAILABLE_POSES[0] if AVAILABLE_POSES else ""
+_analyzer: FrameAnalyzer | None = None
+_camera: IRgbVideoSource | None = None
+_training_history: deque[dict] = deque(maxlen=64)  # 模块级持久化
 
 
 @app.get("/poses")
@@ -106,6 +110,46 @@ async def set_pose(data: dict):
     return {"ok": True, "selected": selected_pose}
 
 
+@app.get("/history")
+async def get_history():
+    """返回最近的训练历史列表。"""
+    return {"ok": True, "data": list(_training_history)}
+
+
+@app.get("/stats/{training_id}")
+async def get_stats(training_id: str):
+    """获取训练统计。training_id='latest' 时返回最近一次。"""
+    if training_id == "latest":
+        if not _training_history:
+            return {"ok": False, "error": "no training history"}
+        return {"ok": True, "data": _training_history[-1]}
+    for s in _training_history:
+        if s["training_id"] == training_id:
+            return {"ok": True, "data": s}
+    return {"ok": False, "error": f"training_id '{training_id}' not found"}
+
+
+@app.post("/control/{action}")
+async def control(action: str):
+    """训练控制：start / pause / stop。"""
+    global _analyzer, _camera
+    if _analyzer is None:
+        return {"ok": False, "error": "no active analyzer"}
+    if action == "start":
+        _analyzer.resume()
+    elif action == "pause":
+        _analyzer.pause()
+    elif action == "stop":
+        _analyzer.stop()
+        hist = _analyzer.stats_history
+        if hist:
+            _training_history.append(hist[-1])
+            logger.info(f"Training saved to history (total: {len(_training_history)})")
+    else:
+        return {"ok": False, "error": f"unknown action: {action}"}
+    return {"ok": True, "action": action}
+
+
 @app.get("/")
 async def root():
     return RedirectResponse(url="/static/index.html")
@@ -117,14 +161,16 @@ async def websocket_endpoint(ws: WebSocket):
     logger.info(f"WebSocket client connected from {ws.client}")
 
     # 构建视频源和帧分析器
+    global _analyzer, _camera
     camera = video_source_factory(args.camera)
     if not camera.open():
         logger.error(f"Failed to open video source (camera={args.camera}, video_path={args.video_path})")
         await ws.close(code=1011, reason="Cannot open source")
         return
-    frame_analyzer = frame_analyzer_factory(args.analyzer_2d, args.analyzer_3d, selected_pose)
+    _camera = camera
+    _analyzer = frame_analyzer = frame_analyzer_factory(args.analyzer_2d, args.analyzer_3d, selected_pose)
 
-    # 进入主循环，捕获、分析并发送视频帧
+    # 进入主循环
     logger.info(f"Streaming started: {camera.width}x{camera.height}@{camera.fps:.0f}fps")
     frame_count = 0
     wall_start = time.monotonic()
@@ -166,6 +212,22 @@ async def websocket_endpoint(ws: WebSocket):
                 )
                 await ws.send_text(rep_msg)
 
+            # 每 30 帧推送统计数据
+            if frame_count % 30 == 0:
+                stats_msg = json.dumps({
+                    "type": "stats",
+                    "state": frame_analyzer.state,
+                    "training_id": frame_analyzer.training_id,
+                    "accuracy": round(frame_analyzer.accuracy, 3),
+                    "rom": round(frame_analyzer.rom, 1),
+                    "balance_score": round(frame_analyzer.balance_score, 1),
+                    "density": round(frame_analyzer.density, 1),
+                    "calories": round(frame_analyzer.calories, 1),
+                    "total_reps": frame_analyzer.rep_count,
+                    "fatigue_score": round(frame_analyzer.fatigue_score, 1),
+                })
+                await ws.send_text(stats_msg)
+
             # 首帧用于诊断
             if frame_count == 0:
                 logger.info(f"First frame: shape={frame.shape}, mean_pixel={frame.mean():.1f}")
@@ -196,6 +258,7 @@ async def websocket_endpoint(ws: WebSocket):
         logger.exception("Unexpected error in streaming loop")
     finally:
         wall_elapsed = time.monotonic() - wall_start
+        _camera = None
         camera.release()
 
         if frame_count == 0:

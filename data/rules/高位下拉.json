@@ -98,5 +98,7 @@
             "min_value": 150,
             "max_value": 180
         }
-    ]
+    ],
+    "calories_per_rep": 0.25,
+    "balance_pairs": [["左肘","右肘"]]
 }

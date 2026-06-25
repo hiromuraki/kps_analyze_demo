@@ -58,5 +58,7 @@
         "top_threshold": 0.4,
         "bottom_threshold": 0.1,
         "count_on": "down_up"
-    }
+    },
+    "calories_per_rep": 0.3,
+    "balance_pairs": [["左肘","右肘"], ["左肩","右肩"]]
 }

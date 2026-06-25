@@ -14,6 +14,8 @@ from .rep_counter import (
     get_rep_feature_value,
     get_rep_count_direction,
 )
+import time
+import uuid
 import numpy as np
 import logging
 
@@ -99,9 +101,14 @@ class RepCounter:
         self._rule = rule
         self._ceiling = get_rep_ceiling(rule)
         self._floor = get_rep_floor(rule)
-        self._direction = get_rep_count_direction(rule)  # "down_up" | "up_down"
+        self._direction = get_rep_count_direction(rule)
         self._phase = RepPhase.UP
         self._count = 0
+        # per-rep ROM 追踪
+        self._feature_min: float = float("inf")
+        self._feature_max: float = float("-inf")
+        self._rom_values: list[float] = []         # 每次完成的 ROM
+        self._rep_timestamps: list[float] = []      # 每次完成的时间戳
 
     # ------------------------------------------------------------------
     @property
@@ -111,6 +118,16 @@ class RepCounter:
     @property
     def phase(self) -> RepPhase:
         return self._phase
+
+    @property
+    def rom_values(self) -> list[float]:
+        """每次动作重复的关节活动度（度）。"""
+        return list(self._rom_values)
+
+    @property
+    def rep_timestamps(self) -> list[float]:
+        """每次动作重复完成时的时间戳（秒）。"""
+        return list(self._rep_timestamps)
 
     # ------------------------------------------------------------------
     def update(self, kps_3d: np.ndarray) -> bool:
@@ -128,6 +145,10 @@ class RepCounter:
         elif value <= self._floor:
             self._phase = RepPhase.DOWN
 
+        # 追踪本 rep 的特征最值
+        self._feature_min = min(self._feature_min, value)
+        self._feature_max = max(self._feature_max, value)
+
         counted = False
         if self._direction == "down_up":
             if prev == RepPhase.DOWN and self._phase == RepPhase.UP:
@@ -138,7 +159,23 @@ class RepCounter:
                 self._count += 1
                 counted = True
 
+        if counted:
+            rom = self._feature_max - self._feature_min
+            self._rom_values.append(rom)
+            self._rep_timestamps.append(time.monotonic())
+            self._feature_min = float("inf")
+            self._feature_max = float("-inf")
+
         return counted
+
+    def reset(self):
+        """重置计数器和 ROM 历史。"""
+        self._count = 0
+        self._phase = RepPhase.UP
+        self._feature_min = float("inf")
+        self._feature_max = float("-inf")
+        self._rom_values.clear()
+        self._rep_timestamps.clear()
 
 
 class FrameAnalyzer:
@@ -157,6 +194,34 @@ class FrameAnalyzer:
         self._rep_counter: RepCounter | None = None
         if "rep_counting" in pose_rule:
             self._rep_counter = RepCounter(pose_rule)
+        self._state: str = "running"  # running | paused | stopped
+        self._debounce_frames = 30
+        self._frame_n = 0
+        self._active_frames = 0      # 仅在 running 态递增，用于 accuracy 计算
+        self._v_first_seen: dict[str, int] = {}
+        self._v_reported: set[str] = set()
+        # 训练统计
+        self._started_at: float = time.monotonic()
+        self._violated_frame_count = 0
+        self._training_id: str = str(uuid.uuid4())[:8]
+        self._stats_history: deque[dict] = deque(maxlen=64)
+        # 冻结快照（stopped 时留存最后统计，避免属性返回 0）
+        self._frozen: dict | None = None
+
+    @property
+    def state(self) -> str:
+        """当前状态：running / paused / stopped。"""
+        return self._state
+
+    @property
+    def training_id(self) -> str:
+        """当前训练会话 ID（8 位）。"""
+        return self._frozen["training_id"] if self._frozen else self._training_id
+
+    @property
+    def stats_history(self) -> list[dict]:
+        """历史训练统计快照列表。"""
+        return list(self._stats_history)
 
     @property
     def pose_name(self) -> str:
@@ -164,8 +229,140 @@ class FrameAnalyzer:
 
     @property
     def rep_count(self) -> int:
-        """当前动作累计完成次数（无 rep_counting 配置时返回 0）。"""
+        """当前动作累计完成次数。"""
+        if self._frozen:
+            return self._frozen.get("total_reps", 0)
         return self._rep_counter.count if self._rep_counter is not None else 0
+
+    @property
+    def accuracy(self) -> float:
+        if self._frozen:
+            return self._frozen.get("accuracy", 0.0)
+        if self._active_frames == 0:
+            return 1.0
+        return 1.0 - (self._violated_frame_count / self._active_frames)
+
+    @property
+    def rom(self) -> float:
+        if self._frozen:
+            return self._frozen.get("rom", 0.0)
+        vals = self._rep_counter.rom_values if self._rep_counter else []
+        return float(np.mean(vals)) if vals else 0.0
+
+    @property
+    def density(self) -> float:
+        if self._frozen:
+            return self._frozen.get("density", 0.0)
+        duration = time.monotonic() - self._started_at
+        if duration <= 0:
+            return 0.0
+        return self.rep_count / (duration / 60.0)
+
+    @property
+    def calories(self) -> float:
+        if self._frozen:
+            return self._frozen.get("calories", 0.0)
+        return self.rep_count * self._rule.get("calories_per_rep", 0.0)
+
+    @property
+    def balance_score(self) -> float:
+        if self._frozen:
+            return self._frozen.get("balance_score", 0.0)
+        vals = self._rep_counter.rom_values if self._rep_counter else []
+        if len(vals) < 2:
+            return 0.0
+        cv = float(np.std(vals) / max(np.mean(vals), 1.0))
+        return max(0.0, 100.0 - cv * 100.0)
+
+    @property
+    def duration_seconds(self) -> float:
+        if self._frozen:
+            return self._frozen.get("duration_seconds", 0.0)
+        return time.monotonic() - self._started_at
+
+    @property
+    def total_frames(self) -> int:
+        if self._frozen:
+            return self._frozen.get("total_frames", 0)
+        return self._frame_n
+
+    @property
+    def violated_frame_count(self) -> int:
+        if self._frozen:
+            return self._frozen.get("violated_frames", 0)
+        return self._violated_frame_count
+
+    @property
+    def fatigue_score(self) -> float:
+        if self._frozen:
+            return self._frozen.get("fatigue_score", 0.0)
+        vals = self._rep_counter.rom_values if self._rep_counter else []
+        if len(vals) < 4:
+            return 0.0
+        n = len(vals)
+        third = n // 3 or 1
+        early_rom = float(np.mean(vals[:third]))
+        late_rom = float(np.mean(vals[-third:]))
+        rom_decay = max(0.0, (early_rom - late_rom) / max(early_rom, 1.0))
+
+        rc = self._rep_counter
+        ts = rc.rep_timestamps if rc else []
+        fps = self._frame_n / max(self.duration_seconds, 0.001)
+        early_spd = (ts[third] - ts[0]) / third if len(ts) > third else 1.0 / fps
+        late_spd = (ts[-1] - ts[-third]) / third if len(ts) > third else 1.0 / fps
+        spd_decay = max(0.0, (late_spd - early_spd) / max(early_spd, 0.01))
+
+        mid = self._frame_n // 2
+        late_v = sum(1 for _, start in self._v_first_seen.items() if start > mid)
+        early_v = len(self._v_first_seen) - late_v
+        v_rise = max(0.0, (late_v - early_v) / max(early_v + late_v, 1.0))
+
+        return (rom_decay * 0.4 + spd_decay * 0.3 + v_rise * 0.3) * 100.0
+
+    # ------------------------------------------------------------------
+    def pause(self):
+        """暂停（停 judge + rep_count，2D/3D 继续）。"""
+        self._state = "paused"
+        logger.info("Analysis paused")
+
+    def resume(self):
+        """开始 / 恢复。"""
+        was_stopped = self._state == "stopped"
+        self._state = "running"
+        self._frozen = None
+        if was_stopped:
+            self._training_id = str(uuid.uuid4())[:8]
+            self._started_at = time.monotonic()
+            self._frame_n = 0
+            self._active_frames = 0
+            self._violated_frame_count = 0
+            if self._rep_counter is not None:
+                self._rep_counter.reset()
+        self._v_first_seen.clear()
+        self._v_reported.clear()
+        logger.info("Analysis %s (id=%s)", "started" if was_stopped else "resumed", self._training_id)
+
+    def stop(self):
+        """停止本次训练：保存统计快照 → 冻结数据 → 进入 stopped 态。"""
+        snap = {
+            "training_id": self._training_id,
+            "pose_name": self._pose_name,
+            "total_reps": self.rep_count,
+            "total_frames": self._active_frames,
+            "violated_frames": self._violated_frame_count,
+            "accuracy": self.accuracy,
+            "rom": self.rom,
+            "density": self.density,
+            "duration_seconds": self.duration_seconds,
+            "calories": self.calories,
+            "balance_score": self.balance_score,
+            "fatigue_score": self.fatigue_score,
+            "stopped_at": time.monotonic(),
+        }
+        self._stats_history.append(snap)
+        self._frozen = snap
+        self._state = "stopped"
+        logger.info(f"Training stopped: {snap['training_id']} → history[{len(self._stats_history)-1}]")
 
     def analyze_frame(self, frame: np.ndarray) -> AnalysisResult:
         """
@@ -201,14 +398,37 @@ class FrameAnalyzer:
             frame_index=-1,
         )  # out: (17, 3)，取当前帧（-1）的 3D 重建结果
 
-        violations, affected_keypoints = judge_pose(kps_3d, self._rule)
+        self._frame_n += 1
 
-        # 动作计数
-        rep_counted = self._rep_counter is not None and self._rep_counter.update(kps_3d)
+        if self._state != "running":
+            violations: list[str] = []
+            rep_counted = False
+            alert_kps_2d: list[int] = []
+        else:
+            self._active_frames += 1
+            violations_raw, affected_keypoints = judge_pose(kps_3d, self._rule)
+            rep_counted = self._rep_counter is not None and self._rep_counter.update(kps_3d)
+            alert_kps_2d = _map_kp_names_to_indices(affected_keypoints)
 
-        # 反向映射：关节点名称 → H36M 索引 (0-16)
-        alert_kps_2d = _map_kp_names_to_indices(affected_keypoints)
-        logger.debug(f"错误的 3D 关节点：({affected_keypoints}), 对应的 2D 点：{alert_kps_2d}")
+            current = set(violations_raw)
+            if current:
+                self._violated_frame_count += 1
+
+            # 新出现 → 记录首帧
+            for v in current - set(self._v_first_seen):
+                self._v_first_seen[v] = self._frame_n
+
+            # 消失 → 抹掉记录
+            for v in set(self._v_first_seen) - current:
+                del self._v_first_seen[v]
+                self._v_reported.discard(v)
+
+            # 持续超过去抖阈值 且 未上报 → 触发
+            violations = []
+            for v in current:
+                if v not in self._v_reported and self._frame_n - self._v_first_seen[v] >= self._debounce_frames:
+                    violations.append(v)
+                    self._v_reported.add(v)
 
         rendered = H36M2dKeypointsRenderer.render_on_frame(frame, kp2d_h36m, alert_kps_2d)
 
