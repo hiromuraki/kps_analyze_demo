@@ -74,7 +74,7 @@ flowchart LR
 
 **6. 渲染** (`core/renderer.py`)
 
-`H36MKeypointsRenderer.render_on_frame()` 在 BGR 帧上绘制 H36M 骨架。默认暖金色点/线，告警关键点高亮为青绿点/橙红线。
+`H36MKeypointsRenderer.render_on_frame()` 在 BGR 帧上绘制 H36M 骨架。默认蓝绿色点/线，告警关键点高亮为黄色点/红色线。
 
 **7. 前端** (`static/index.html`)
 
