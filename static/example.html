@@ -60,9 +60,11 @@
 
   /* 底部 */
   #bottom-bar { position:absolute; bottom:24px; left:50%; transform:translateX(-50%); z-index:10; display:flex; gap:14px; }
-  #bottom-bar button { border:none; padding:12px 32px; border-radius:26px; font-size:15px; font-weight:bold; cursor:pointer; color:#fff; backdrop-filter:blur(8px); transition:all .2s; }
-  #btn-stop2  { background:rgba(200,50,50,0.85); }
-  #btn-stop2:hover  { background:rgba(240,60,60,0.9); }
+  #bottom-bar button { border:none; padding:12px 32px; border-radius:26px; font-size:15px; font-weight:bold; cursor:pointer; color:#222; backdrop-filter:blur(8px); transition:all .2s; }
+  #btn-pause2 { background:rgba(180,200,80,0.85); }
+  #btn-pause2:hover { background:rgba(200,220,100,0.9); }
+  #btn-stop2  { background:rgba(200,130,130,0.85); }
+  #btn-stop2:hover  { background:rgba(240,160,160,0.9); }
 </style>
 </head>
 <body>
@@ -114,7 +116,7 @@
 
 <script>
 const REPS_PER_SET = 8, SET_TOTAL = 4;
-let _totalReps = 0, _alertTimer = 0;
+let _totalReps = 0, _alertTimer = 0, _completed = false;
 const $ = id => document.getElementById(id);
 
 // ── 控制 ──
@@ -155,6 +157,7 @@ function resetData() {
   $("rhythm-label").textContent = "--";
   $("rhythm-hint").textContent = "";
   _totalReps = 0;
+  _completed = false;
 }
 
 function setBtnState(state) {
@@ -234,6 +237,12 @@ function updateReps() {
   $("set-bar").style.width = ((setIdx + 1) / SET_TOTAL * 100) + "%";
   $("rep-info").textContent = "每组 " + REPS_PER_SET + " 次 | 当前 " + repInSet + "/" + REPS_PER_SET;
   $("rep-bar").style.width = (repInSet / REPS_PER_SET * 100) + "%";
+
+  if (!_completed && _totalReps >= REPS_PER_SET * SET_TOTAL) {
+    _completed = true;
+    ctrl("stop");
+    showToast("训练完成！");
+  }
 }
 </script>
 </body>
