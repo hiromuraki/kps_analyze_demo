@@ -1,4 +1,4 @@
 #!/bin/bash
 
 # uv sync --frozen && uv run main.py --mode camera --camera 1 --width 640 --height 480 --fps 30
-python main.py --analyzer-2d rtmpose --analyzer-3d mhformer --camera 2 --width 640 --height 480 --fps 30
+uv run main.py --analyzer-2d mock --analyzer-3d mock --camera -1 --width 640 --height 480 --fps 30
