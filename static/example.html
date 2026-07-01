@@ -6,96 +6,94 @@
 <title>AI 力量训练实时反馈</title>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
-  body { height:100vh; background:#0a0a0a; font-family:'PingFang SC','Microsoft YaHei',sans-serif; overflow:hidden; }
+  body { height:100vh; background:#000; font-family:'PingFang SC','Microsoft YaHei',sans-serif; overflow:hidden; }
 
-  /* 满屏视频画布 */
-  #video-bg { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:#000; z-index:0; }
-  #video-bg img { max-width:100%; max-height:100vh; object-fit:contain; }
+  /* ── 背景层：拉伸视频 + 毛玻璃 ── */
+  #bg-layer { position:absolute; inset:-20px; z-index:0; overflow:hidden; }
+  #bg-img   { width:calc(100% + 40px); height:calc(100% + 40px); object-fit:cover; filter:blur(20px) brightness(0.4); }
+  /* ── 前景视频：居中等比缩放 ── */
+  #fg-video { position:absolute; inset:0; z-index:1; display:flex; align-items:center; justify-content:center; }
+  #fg-video img { max-width:100%; max-height:100vh; }
 
-  /* ── 顶部告警条 ── */
+  /* ── 顶部告警 ── */
   #alert-bar {
     position:absolute; top:16px; left:50%; transform:translateX(-50%); z-index:10;
     background:rgba(200,30,30,0.92); color:#fff; padding:10px 28px; border-radius:30px;
     font-size:15px; font-weight:bold; display:none; align-items:center; gap:8px;
     backdrop-filter:blur(8px); box-shadow:0 4px 20px rgba(200,30,30,0.4);
   }
-  #alert-bar .icon { font-size:20px; }
-  #alert-fix { display:none; position:absolute; top:68px; left:50%; transform:translateX(-50%); z-index:9;
+  #alert-sub { display:none; position:absolute; top:68px; left:50%; transform:translateX(-50%); z-index:9;
     background:rgba(0,0,0,0.75); color:#f90; padding:6px 18px; border-radius:14px; font-size:12px; backdrop-filter:blur(4px); }
 
-  /* ── 悬浮卡片通用 ── */
+  /* ── 卡片 ── */
   .card {
     position:absolute; z-index:10; background:rgba(10,10,20,0.78); border-radius:14px;
     padding:14px 18px; color:#ddd; backdrop-filter:blur(10px);
     border:1px solid rgba(255,255,255,0.08); box-shadow:0 8px 32px rgba(0,0,0,0.5);
   }
-  .card h4 { font-size:12px; color:#999; margin-bottom:8px; text-transform:uppercase; letter-spacing:1px; }
+  .card h4 { font-size:12px; color:#999; margin-bottom:8px; letter-spacing:1px; }
 
   /* ── 左侧 生理负荷 ── */
   #card-load { left:16px; top:50%; transform:translateY(-50%); width:190px; }
   #card-load .hr-val { font-size:36px; font-weight:bold; color:#f44; }
-  #card-load .hr-bar-bg { height:6px; background:#333; border-radius:3px; margin:6px 0 12px; }
-  #card-load .hr-bar-fg { height:6px; background:linear-gradient(90deg,#4af,#f80,#f44); border-radius:3px; width:60%; }
   #card-load .cal-val { font-size:22px; font-weight:bold; color:#4f8; }
   #card-load .cal-ref { font-size:11px; color:#666; margin-bottom:10px; }
   #card-load .intensity { font-size:13px; color:#fa0; }
+  .bar-bg { height:6px; background:#333; border-radius:3px; margin:6px 0 10px; }
+  .bar-fg { height:6px; border-radius:3px; transition:width .3s; }
 
   /* ── 右侧 动作追踪 ── */
-  #card-track { right:16px; top:50%; transform:translateY(-50%); width:200px; }
-  #card-track .pose-name { font-size:16px; font-weight:bold; margin-bottom:4px; }
-  #card-track .pose-name .dot { display:inline-block; width:8px; height:8px; background:#0f0; border-radius:50%; margin-right:6px; }
+  #card-track { right:16px; top:50%; transform:translateY(-50%); width:210px; }
+  #card-track .pose-name { font-size:16px; font-weight:bold; }
+  #card-track .dot { display:inline-block; width:8px; height:8px; background:#0f0; border-radius:50%; margin-right:6px; }
   #card-track .set-info { font-size:26px; font-weight:bold; color:#4af; margin:6px 0; }
-  #card-track .set-bar-bg { height:6px; background:#333; border-radius:3px; margin:4px 0 10px; }
-  #card-track .set-bar-fg { height:6px; background:#4af; border-radius:3px; }
-  #card-track .rhythm { font-size:14px; margin:4px 0; }
+  #card-track .rep-info { font-size:13px; color:#ccc; margin:4px 0 8px; }
   #card-track .rhythm .ring { display:inline-block; width:48px; height:48px; border:3px solid #f90; border-radius:50%; line-height:42px; text-align:center; font-size:18px; font-weight:bold; color:#f90; vertical-align:middle; margin-right:8px; }
-  #card-track .rhythm-hint { font-size:11px; color:#f90; }
+  #card-track .rhythm-hint { font-size:11px; color:#f90; margin-top:2px; }
 
-  /* ── 底部控制栏 ── */
-  #bottom-bar {
-    position:absolute; bottom:24px; left:50%; transform:translateX(-50%); z-index:10;
-    display:flex; gap:14px;
-  }
-  #bottom-bar button {
-    border:none; padding:12px 32px; border-radius:26px; font-size:15px; font-weight:bold;
-    cursor:pointer; color:#fff; backdrop-filter:blur(8px); transition:all .2s;
-  }
-  #btn-pause2 { background:rgba(100,100,100,0.7); }
+  /* ── 底部控制 ── */
+  #bottom-bar { position:absolute; bottom:24px; left:50%; transform:translateX(-50%); z-index:10; display:flex; gap:14px; }
+  #bottom-bar button { border:none; padding:12px 32px; border-radius:26px; font-size:15px; font-weight:bold; cursor:pointer; color:#fff; backdrop-filter:blur(8px); transition:all .2s; }
+  #btn-pause2 { background:rgba(160,140,20,0.8); }
+  #btn-pause2.paused { background:rgba(100,100,100,0.7); }
   #btn-stop2  { background:rgba(200,50,50,0.85); }
-  #btn-pause2:hover { background:rgba(140,140,140,0.85); }
   #btn-stop2:hover  { background:rgba(240,60,60,0.9); }
-  #btn-pause2.running { background:rgba(180,140,0,0.8); }
 </style>
 </head>
 <body>
 
-<!-- 视频背景 -->
-<div id="video-bg"><img id="stream" alt="loading..." /></div>
+<!-- 背景：拉伸模糊视频 -->
+<div id="bg-layer"><img id="bg-img" alt="" /></div>
 
-<!-- 顶部告警 -->
-<div id="alert-bar"><span class="icon">⚠</span> <span id="alert-text"></span></div>
-<div id="alert-fix"></div>
+<!-- 前景：清晰视频 -->
+<div id="fg-video"><img id="stream" alt="loading..." /></div>
 
-<!-- 左侧 生理负荷 -->
+<!-- 告警 -->
+<div id="alert-bar"><span style="font-size:20px">⚠</span> <span id="alert-text"></span></div>
+<div id="alert-sub"></div>
+
+<!-- 左侧面板 -->
 <div class="card" id="card-load">
   <h4>生理负荷</h4>
   <div class="hr-val" id="hr-val">--</div>
   <div style="font-size:11px;color:#888">估算心率 BPM</div>
-  <div class="hr-bar-bg"><div class="hr-bar-fg" id="hr-bar"></div></div>
+  <div class="bar-bg"><div class="bar-fg" id="hr-bar" style="width:60%;background:linear-gradient(90deg,#4af,#f80,#f44)"></div></div>
   <div class="cal-val" id="cal-val">--</div>
   <div style="font-size:11px;color:#666">累计消耗 kcal</div>
   <div class="cal-ref" id="cal-ref"></div>
   <div class="intensity" id="intensity">--</div>
-  <div class="hr-bar-bg" style="margin-top:4px"><div class="hr-bar-fg" id="int-bar" style="width:30%"></div></div>
+  <div class="bar-bg"><div class="bar-fg" id="int-bar" style="width:30%;background:#fa0"></div></div>
 </div>
 
-<!-- 右侧 动作追踪 -->
+<!-- 右侧面板 -->
 <div class="card" id="card-track">
   <h4>动作追踪</h4>
   <div class="pose-name"><span class="dot"></span><span id="pose-name">--</span></div>
-  <div style="font-size:12px;color:#888">训练组数 & 进度</div>
+  <div style="font-size:12px;color:#888;margin-top:4px">组数进度</div>
   <div class="set-info" id="set-info">--</div>
-  <div class="set-bar-bg"><div class="set-bar-fg" id="set-bar" style="width:0%"></div></div>
+  <div class="bar-bg"><div class="bar-fg" id="set-bar" style="width:0%;background:#4af"></div></div>
+  <div class="rep-info" id="rep-info">每组 8 次 | 当前 0/8</div>
+  <div class="bar-bg"><div class="bar-fg" id="rep-bar" style="width:0%;background:#0a4"></div></div>
   <div style="font-size:12px;color:#888;margin-top:8px">动作节奏</div>
   <div class="rhythm"><span class="ring" id="rhythm-ring">--</span><span id="rhythm-label">--</span></div>
   <div class="rhythm-hint" id="rhythm-hint"></div>
@@ -103,7 +101,7 @@
 
 <!-- 底部控制 -->
 <div id="bottom-bar">
-  <button id="btn-pause2" class="running" onclick="ctrl('pause')">⏸ 暂停</button>
+  <button id="btn-pause2" class="paused" onclick="togglePause()">▶ 开始</button>
   <button id="btn-stop2" onclick="ctrl('stop')">⏹ 结束训练</button>
 </div>
 
@@ -111,16 +109,29 @@
 // ============================================================================
 // State
 // ============================================================================
-let _state = "running", _heartRate = 115, _setTotal = 4, _setCurrent = 1;
+const REPS_PER_SET = 8, SET_TOTAL = 4;
+let _state = "running", _totalReps = 0;
+let _alertTimer = 0;
+
+const $ = id => document.getElementById(id);
 
 function ctrl(action) {
-  fetch(`/control/${action}`, {method:"POST"}).then(r=>r.json()).then(d=>{
-    if (!d.ok) return;
-    const b = document.getElementById("btn-pause2");
-    if (action === "start") { _state = "running"; b.textContent="⏸ 暂停"; b.className="running"; }
-    else if (action === "pause") { _state = "paused"; b.textContent="▶ 继续"; b.className=""; }
-    else if (action === "stop") { _state = "stopped"; b.textContent="⏸ 暂停"; b.className="running"; }
+  fetch(`/control/${action}`, {method:"POST"}).then(r=>r.json()).then(d => {
+    if (!d.ok) { console.warn("control failed:", d); return; }
+    if (action === "stop") { _state = "stopped"; _totalReps = 0; updatePauseBtn(); }
+    else if (action === "pause") { _state = "paused"; updatePauseBtn(); }
+    else if (action === "start") { _state = "running"; updatePauseBtn(); }
   });
+}
+
+function togglePause() {
+  ctrl(_state === "running" ? "pause" : "start");
+}
+
+function updatePauseBtn() {
+  const b = $("btn-pause2");
+  if (_state === "running") { b.textContent = "⏸ 暂停"; b.className = ""; }
+  else { b.textContent = "▶ 开始"; b.className = "paused"; }
 }
 
 // ============================================================================
@@ -131,88 +142,75 @@ ws.binaryType = "blob";
 
 ws.onmessage = (e) => {
   if (e.data instanceof Blob) {
-    document.getElementById("stream").src = URL.createObjectURL(e.data);
+    const url = URL.createObjectURL(e.data);
+    $("stream").src = url;
+    $("bg-img").src = url;
   } else {
     const m = JSON.parse(e.data);
     if (m.type === "alert") {
-      document.getElementById("alert-bar").style.display = "flex";
-      document.getElementById("alert-text").textContent = m.text;
-      document.getElementById("alert-fix").style.display = "block";
-      document.getElementById("alert-fix").textContent = "请检查姿势，注意动作规范";
+      $("alert-bar").style.display = "flex";
+      $("alert-text").textContent = m.text;
+      $("alert-sub").style.display = "block";
+      $("alert-sub").textContent = "请检查姿势，注意动作规范";
+      clearTimeout(_alertTimer);
+      _alertTimer = setTimeout(() => {
+        $("alert-bar").style.display = "none";
+        $("alert-sub").style.display = "none";
+      }, 1000);
     } else if (m.type === "stats") {
       updateStats(m);
     } else if (m.type === "log" && m.text && m.text.startsWith("rep:")) {
-      const count = parseInt(m.text.slice(4));
-      _setCurrent = Math.min(_setTotal, Math.floor(count / 12) + 1);
-      updateSets();
-    } else if (m.type === "kps3d") { /* 骨骼数据保留 */ }
+      _totalReps = parseInt(m.text.slice(4));
+      updateReps();
+    }
   }
 };
 
 // ============================================================================
-// UI updates
+// UI
 // ============================================================================
-const _riceBowl = 0.5 / 112; // 一碗米饭约112kcal
+const _riceBowl = 0.5 / 112;
 
 function updateStats(m) {
-  if (m.state) _state = m.state;
+  if (m.state && m.state !== _state) { _state = m.state; updatePauseBtn(); }
 
-  // -- 心率 (模拟) --
-  _heartRate = 105 + Math.floor(Math.random() * 40) + Math.floor(m.density * 0.5);
-  document.getElementById("hr-val").textContent = _heartRate + " BPM";
-  const hrPct = Math.min(100, (_heartRate - 80) / 1.2);
-  document.getElementById("hr-bar").style.width = hrPct + "%";
+  // 心率（模拟）
+  const hr = 105 + Math.floor(Math.random() * 40) + Math.floor((m.density||0) * 0.5);
+  $("hr-val").textContent = hr + " BPM";
+  $("hr-bar").style.width = Math.min(100, (hr - 80) / 1.2) + "%";
 
-  // -- 卡路里 --
+  // 卡路里
   const cal = m.calories || 0;
-  document.getElementById("cal-val").textContent = cal.toFixed(0) + " kcal";
-  document.getElementById("cal-ref").textContent = "约 " + (cal * _riceBowl).toFixed(1) + " 碗米饭";
+  $("cal-val").textContent = cal.toFixed(0) + " kcal";
+  $("cal-ref").textContent = "约 " + (cal * _riceBowl).toFixed(1) + " 碗米饭";
 
-  // -- 强度 --
+  // 强度
   const dens = m.density || 0;
-  let intLabel = dens < 10 ? "低强度 热身中" : dens < 20 ? "中强度 燃脂中" : "高强度 冲刺中";
-  document.getElementById("intensity").textContent = intLabel;
-  document.getElementById("int-bar").style.width = Math.min(100, dens * 3) + "%";
+  $("intensity").textContent = dens < 10 ? "低强度 热身中" : dens < 20 ? "中强度 燃脂中" : "高强度 冲刺中";
+  $("int-bar").style.width = Math.min(100, dens * 3) + "%";
 
-  // -- 动作名称 --
-  document.getElementById("pose-name").textContent = m.pose_name || "推胸";
+  // 动作名
+  $("pose-name").textContent = m.pose_name || "--";
 
-  // -- 组数 --
-  updateSets();
+  // 组数
+  _totalReps = m.total_reps || 0;
+  updateReps();
 
-  // -- 节奏 --
+  // 节奏
   const rhythm = 25 + Math.floor(Math.random() * 20);
-  document.getElementById("rhythm-ring").textContent = rhythm;
-  const rLabel = rhythm < 30 ? "节奏偏慢" : rhythm > 40 ? "节奏偏快" : "节奏适中";
-  document.getElementById("rhythm-label").textContent = rLabel;
-  document.getElementById("rhythm-hint").textContent = rhythm < 30 ? "保持稳定，建议加快" : rhythm > 40 ? "放慢速度，注意控制" : "保持当前节奏";
+  $("rhythm-ring").textContent = rhythm;
+  $("rhythm-label").textContent = rhythm < 30 ? "节奏偏慢" : rhythm > 40 ? "节奏偏快" : "节奏适中";
+  $("rhythm-hint").textContent = rhythm < 30 ? "保持稳定，加快速度" : rhythm > 40 ? "放慢，注意控制" : "保持当前节奏";
 }
 
-function updateSets() {
-  document.getElementById("set-info").textContent = _setCurrent + " / " + _setTotal;
-  document.getElementById("set-bar").style.width = (_setCurrent / _setTotal * 100) + "%";
+function updateReps() {
+  const setIdx = Math.min(SET_TOTAL - 1, Math.floor(_totalReps / REPS_PER_SET));
+  const repInSet = _totalReps % REPS_PER_SET;
+  $("set-info").textContent = (setIdx + 1) + " / " + SET_TOTAL;
+  $("set-bar").style.width = ((setIdx + 1) / SET_TOTAL * 100) + "%";
+  $("rep-info").textContent = "每组 " + REPS_PER_SET + " 次 | 当前 " + repInSet + "/" + REPS_PER_SET;
+  $("rep-bar").style.width = (repInSet / REPS_PER_SET * 100) + "%";
 }
-
-// ============================================================================
-// Alert auto-hide
-// ============================================================================
-let alertTimer;
-const origOnMsg = ws.onmessage;
-ws.onmessage = (e) => {
-  origOnMsg(e);
-  clearTimeout(alertTimer);
-  alertTimer = setTimeout(() => {
-    document.getElementById("alert-bar").style.display = "none";
-    document.getElementById("alert-fix").style.display = "none";
-  }, 2000);
-};
-
-// ============================================================================
-// Pose menu (fetch on load)
-// ============================================================================
-fetch("/poses").then(r=>r.json()).then(d=>{
-  // just pick first for demo
-});
 </script>
 </body>
 </html>
