@@ -17,9 +17,13 @@ uv run main.py --analyzer-2d rtmpose --analyzer-3d mhformer --camera 0 --width 6
 
 # Mixed: real 2D + mock 3D
 uv run main.py --analyzer-2d rtmpose --analyzer-3d mock --camera 0
+
+# Demo frontend (AR-style UI)
+uv run example.py --analyzer-2d mock --analyzer-3d mock --camera -1
 ```
 
-`main.py` starts on `0.0.0.0:8000`. Open `http://localhost:8000` in a browser.
+`main.py` starts on `0.0.0.0:2800`. Open `http://localhost:2800` in a browser.
+`example.py` starts on `0.0.0.0:28001` (demo UI at `http://localhost:28001`).
 
 ## Architecture
 
@@ -44,7 +48,7 @@ Camera/Video → 2D Pose Extract (COCO17) → COCO→H36M convert → 3D Reconst
 | `I2dPoseExtractor` | `core/kp2d_extractor/` | 2D keypoints from BGR frame. Mock reads `.npz`, real wraps RTMDet+RTMPose QNN inference. |
 | `I3dPoseReconstructor` | `core/kp3d_reconstructor/` | 3D lifting from 351-frame 2D history using MHFormer. Mock reads `.npz`. |
 
-Mock mode avoids hardware dependency and is the default.
+Mock mode avoids hardware dependency. Use `--analyzer-2d mock --analyzer-3d mock --camera -1` to enable it.
 
 ### Model directories
 
@@ -62,7 +66,7 @@ MHFormer requires a 351-frame window. `FrameAnalyzer` maintains a `deque(maxlen=
 
 ### Frontend
 
-Single-page app at [static/index.html](static/index.html). Left: video + 3D skeleton (Three.js). Right: control buttons (start/pause/stop), real-time stats panel, training history, message log. All over a single WebSocket (`/ws`) — binary (JPEG frames) and text (JSON: log, kps3d, stats).
+Two frontends: [static/index.html](static/index.html) (debug/developer UI) and [static/example.html](static/example.html) (AR-style demo UI with blurred background, physiological load panel, workout tracking). Both over a single WebSocket (`/ws`) — binary (JPEG frames) and text (JSON: log/kps3d/stats/alert).
 
 ### REST API
 

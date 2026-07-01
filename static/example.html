@@ -8,14 +8,15 @@
   * { margin:0; padding:0; box-sizing:border-box; }
   body { height:100vh; background:#000; font-family:'PingFang SC','Microsoft YaHei',sans-serif; overflow:hidden; }
 
-  /* ── 背景层：拉伸视频 + 毛玻璃 ── */
-  #bg-layer { position:absolute; inset:-20px; z-index:0; overflow:hidden; }
-  #bg-img   { width:calc(100% + 40px); height:calc(100% + 40px); object-fit:cover; filter:blur(20px) brightness(0.4); }
-  /* ── 前景视频：居中等比缩放 ── */
-  #fg-video { position:absolute; inset:0; z-index:1; display:flex; align-items:center; justify-content:center; }
-  #fg-video img { max-width:100%; max-height:100vh; }
+  /* 背景层：拉伸模糊 */
+  #bg-layer { position:fixed; inset:-20px; z-index:0; overflow:hidden; }
+  #bg-img   { width:calc(100%+40px); height:calc(100%+40px); object-fit:cover; filter:blur(20px) brightness(0.35); }
 
-  /* ── 顶部告警 ── */
+  /* 前景视频 */
+  #fg-video { position:absolute; top:0; left:50%; transform:translateX(-50%); z-index:1; height:100vh; display:flex; align-items:flex-start; }
+  #fg-video img { height:100vh; width:auto; }
+
+  /* 告警 */
   #alert-bar {
     position:absolute; top:16px; left:50%; transform:translateX(-50%); z-index:10;
     background:rgba(200,30,30,0.92); color:#fff; padding:10px 28px; border-radius:30px;
@@ -25,15 +26,21 @@
   #alert-sub { display:none; position:absolute; top:68px; left:50%; transform:translateX(-50%); z-index:9;
     background:rgba(0,0,0,0.75); color:#f90; padding:6px 18px; border-radius:14px; font-size:12px; backdrop-filter:blur(4px); }
 
-  /* ── 卡片 ── */
+  /* Toast */
+  #toast { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); z-index:100;
+    background:rgba(0,200,100,0.9); color:#fff; padding:16px 32px; border-radius:12px;
+    font-size:18px; font-weight:bold; display:none; pointer-events:none;
+    box-shadow:0 8px 32px rgba(0,200,100,0.4); }
+
+  /* 卡片 */
   .card {
-    position:absolute; z-index:10; background:rgba(10,10,20,0.78); border-radius:14px;
+    position:absolute; z-index:10; background:rgba(10,10,20,0.38); border-radius:14px;
     padding:14px 18px; color:#ddd; backdrop-filter:blur(10px);
     border:1px solid rgba(255,255,255,0.08); box-shadow:0 8px 32px rgba(0,0,0,0.5);
   }
   .card h4 { font-size:12px; color:#999; margin-bottom:8px; letter-spacing:1px; }
 
-  /* ── 左侧 生理负荷 ── */
+  /* 左侧 */
   #card-load { left:16px; top:50%; transform:translateY(-50%); width:190px; }
   #card-load .hr-val { font-size:36px; font-weight:bold; color:#f44; }
   #card-load .cal-val { font-size:22px; font-weight:bold; color:#4f8; }
@@ -42,7 +49,7 @@
   .bar-bg { height:6px; background:#333; border-radius:3px; margin:6px 0 10px; }
   .bar-fg { height:6px; border-radius:3px; transition:width .3s; }
 
-  /* ── 右侧 动作追踪 ── */
+  /* 右侧 */
   #card-track { right:16px; top:50%; transform:translateY(-50%); width:210px; }
   #card-track .pose-name { font-size:16px; font-weight:bold; }
   #card-track .dot { display:inline-block; width:8px; height:8px; background:#0f0; border-radius:50%; margin-right:6px; }
@@ -51,28 +58,25 @@
   #card-track .rhythm .ring { display:inline-block; width:48px; height:48px; border:3px solid #f90; border-radius:50%; line-height:42px; text-align:center; font-size:18px; font-weight:bold; color:#f90; vertical-align:middle; margin-right:8px; }
   #card-track .rhythm-hint { font-size:11px; color:#f90; margin-top:2px; }
 
-  /* ── 底部控制 ── */
+  /* 底部 */
   #bottom-bar { position:absolute; bottom:24px; left:50%; transform:translateX(-50%); z-index:10; display:flex; gap:14px; }
   #bottom-bar button { border:none; padding:12px 32px; border-radius:26px; font-size:15px; font-weight:bold; cursor:pointer; color:#fff; backdrop-filter:blur(8px); transition:all .2s; }
-  #btn-pause2 { background:rgba(160,140,20,0.8); }
-  #btn-pause2.paused { background:rgba(100,100,100,0.7); }
   #btn-stop2  { background:rgba(200,50,50,0.85); }
   #btn-stop2:hover  { background:rgba(240,60,60,0.9); }
 </style>
 </head>
 <body>
 
-<!-- 背景：拉伸模糊视频 -->
+<!-- 背景 -->
 <div id="bg-layer"><img id="bg-img" alt="" /></div>
-
-<!-- 前景：清晰视频 -->
+<!-- 前景视频 -->
 <div id="fg-video"><img id="stream" alt="loading..." /></div>
 
 <!-- 告警 -->
 <div id="alert-bar"><span style="font-size:20px">⚠</span> <span id="alert-text"></span></div>
 <div id="alert-sub"></div>
 
-<!-- 左侧面板 -->
+<!-- 左侧 -->
 <div class="card" id="card-load">
   <h4>生理负荷</h4>
   <div class="hr-val" id="hr-val">--</div>
@@ -85,7 +89,7 @@
   <div class="bar-bg"><div class="bar-fg" id="int-bar" style="width:30%;background:#fa0"></div></div>
 </div>
 
-<!-- 右侧面板 -->
+<!-- 右侧 -->
 <div class="card" id="card-track">
   <h4>动作追踪</h4>
   <div class="pose-name"><span class="dot"></span><span id="pose-name">--</span></div>
@@ -99,28 +103,28 @@
   <div class="rhythm-hint" id="rhythm-hint"></div>
 </div>
 
-<!-- 底部控制 -->
+<!-- Toast -->
+<div id="toast">本次训练已结束</div>
+
+<!-- 底部 -->
 <div id="bottom-bar">
-  <button id="btn-pause2" class="paused" onclick="togglePause()">▶ 开始</button>
-  <button id="btn-stop2" onclick="ctrl('stop')">⏹ 结束训练</button>
+  <button id="btn-pause2" onclick="togglePause()">▶ 开始</button>
+  <button id="btn-stop2"  onclick="ctrl('stop')">⏹ 结束训练</button>
 </div>
 
 <script>
-// ============================================================================
-// State
-// ============================================================================
 const REPS_PER_SET = 8, SET_TOTAL = 4;
-let _state = "running", _totalReps = 0;
-let _alertTimer = 0;
-
+let _totalReps = 0, _alertTimer = 0;
 const $ = id => document.getElementById(id);
+
+// ── 控制 ──
+let _state = "running";
+
+let _prevState = "running";
 
 function ctrl(action) {
   fetch(`/control/${action}`, {method:"POST"}).then(r=>r.json()).then(d => {
-    if (!d.ok) { console.warn("control failed:", d); return; }
-    if (action === "stop") { _state = "stopped"; _totalReps = 0; updatePauseBtn(); }
-    else if (action === "pause") { _state = "paused"; updatePauseBtn(); }
-    else if (action === "start") { _state = "running"; updatePauseBtn(); }
+    if (!d.ok) console.warn("control:", d.error);
   });
 }
 
@@ -128,15 +132,44 @@ function togglePause() {
   ctrl(_state === "running" ? "pause" : "start");
 }
 
-function updatePauseBtn() {
-  const b = $("btn-pause2");
-  if (_state === "running") { b.textContent = "⏸ 暂停"; b.className = ""; }
-  else { b.textContent = "▶ 开始"; b.className = "paused"; }
+function showToast(text) {
+  const t = $("toast");
+  t.textContent = text;
+  t.style.display = "block";
+  setTimeout(() => { t.style.display = "none"; }, 2000);
 }
 
-// ============================================================================
-// WebSocket
-// ============================================================================
+function resetData() {
+  $("hr-val").textContent = "--";
+  $("hr-bar").style.width = "60%";
+  $("cal-val").textContent = "--";
+  $("cal-ref").textContent = "";
+  $("intensity").textContent = "--";
+  $("int-bar").style.width = "30%";
+  $("pose-name").textContent = "--";
+  $("set-info").textContent = "--";
+  $("set-bar").style.width = "0%";
+  $("rep-info").textContent = "每组 8 次 | 当前 0/8";
+  $("rep-bar").style.width = "0%";
+  $("rhythm-ring").textContent = "--";
+  $("rhythm-label").textContent = "--";
+  $("rhythm-hint").textContent = "";
+  _totalReps = 0;
+}
+
+function setBtnState(state) {
+  if (_prevState !== "stopped" && state === "stopped") {
+    showToast("本次训练已结束");
+    resetData();
+  }
+  _prevState = _state = state;
+  const b = $("btn-pause2");
+  if (state === "running") { b.textContent = "⏸ 暂停"; b.disabled = false; }
+  else { b.textContent = "▶ 开始"; b.disabled = false; }
+  $("btn-stop2").disabled = (state === "stopped");
+}
+
+// ── WebSocket ──
 const ws = new WebSocket(`ws://${location.host}/ws`);
 ws.binaryType = "blob";
 
@@ -158,6 +191,7 @@ ws.onmessage = (e) => {
         $("alert-sub").style.display = "none";
       }, 1000);
     } else if (m.type === "stats") {
+      setBtnState(m.state);
       updateStats(m);
     } else if (m.type === "log" && m.text && m.text.startsWith("rep:")) {
       _totalReps = parseInt(m.text.slice(4));
@@ -166,37 +200,27 @@ ws.onmessage = (e) => {
   }
 };
 
-// ============================================================================
-// UI
-// ============================================================================
+// ── UI ──
 const _riceBowl = 0.5 / 112;
 
 function updateStats(m) {
-  if (m.state && m.state !== _state) { _state = m.state; updatePauseBtn(); }
-
-  // 心率（模拟）
-  const hr = 105 + Math.floor(Math.random() * 40) + Math.floor((m.density||0) * 0.5);
+  const hr = 130 + Math.floor(Math.random() * 11);
   $("hr-val").textContent = hr + " BPM";
   $("hr-bar").style.width = Math.min(100, (hr - 80) / 1.2) + "%";
 
-  // 卡路里
   const cal = m.calories || 0;
   $("cal-val").textContent = cal.toFixed(0) + " kcal";
   $("cal-ref").textContent = "约 " + (cal * _riceBowl).toFixed(1) + " 碗米饭";
 
-  // 强度
   const dens = m.density || 0;
   $("intensity").textContent = dens < 10 ? "低强度 热身中" : dens < 20 ? "中强度 燃脂中" : "高强度 冲刺中";
   $("int-bar").style.width = Math.min(100, dens * 3) + "%";
 
-  // 动作名
   $("pose-name").textContent = m.pose_name || "--";
 
-  // 组数
   _totalReps = m.total_reps || 0;
   updateReps();
 
-  // 节奏
   const rhythm = 25 + Math.floor(Math.random() * 20);
   $("rhythm-ring").textContent = rhythm;
   $("rhythm-label").textContent = rhythm < 30 ? "节奏偏慢" : rhythm > 40 ? "节奏偏快" : "节奏适中";
