@@ -95,6 +95,8 @@
 <div class="card" id="card-track">
   <h4>动作追踪</h4>
   <div class="pose-name"><span class="dot"></span><span id="pose-name">--</span></div>
+  <div id="motion-phase" style="font-size:14px;color:#fa0;margin:2px 0 1px"></div>
+  <div id="feature-val" style="font-size:11px;color:#aaa;margin-bottom:4px"></div>
   <div style="font-size:12px;color:#888;margin-top:4px">组数进度</div>
   <div class="set-info" id="set-info">--</div>
   <div class="bar-bg"><div class="bar-fg" id="set-bar" style="width:0%;background:#4af"></div></div>
@@ -149,6 +151,8 @@ function resetData() {
   $("intensity").textContent = "--";
   $("int-bar").style.width = "30%";
   $("pose-name").textContent = "--";
+  $("motion-phase").textContent = "";
+  $("feature-val").textContent = "";
   $("set-info").textContent = "--";
   $("set-bar").style.width = "0%";
   $("rep-info").textContent = "每组 8 次 | 当前 0/8";
@@ -196,6 +200,10 @@ ws.onmessage = (e) => {
     } else if (m.type === "stats") {
       setBtnState(m.state);
       updateStats(m);
+    } else if (m.type === "kps3d") {
+      const motionMap = {descent:"⬇ 下降期", ascent:"⬆ 上升期", static:"⏸ 静止期"};
+      $("motion-phase").textContent = motionMap[m.motion] || "";
+      $("feature-val").textContent = "特征值: " + ((m.feature_value || 0).toFixed(1)) + "°";
     } else if (m.type === "log" && m.text && m.text.startsWith("rep:")) {
       _totalReps = parseInt(m.text.slice(4));
       updateReps();

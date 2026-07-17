@@ -243,9 +243,14 @@ async def websocket_endpoint(ws: WebSocket):
             await ws.send_bytes(buffer.tobytes())
             total_ws_video_ms += (time.monotonic() - t) * 1000
 
-            # (5) 发送 3D 骨骼数据
+            # (5) 发送 3D 骨骼数据（附 feature_value + motion）
             t = time.monotonic()
-            kps3d_msg = json.dumps({"type": "kps3d", "data": result.kps_3d.tolist()})
+            kps3d_msg = json.dumps({
+                "type": "kps3d",
+                "data": result.kps_3d.tolist(),
+                "feature_value": float(round(frame_analyzer.rep_feature_value, 1)),
+                "motion": result.motion,
+            })
             await ws.send_text(kps3d_msg)
             total_ws_3d_ms += (time.monotonic() - t) * 1000
 

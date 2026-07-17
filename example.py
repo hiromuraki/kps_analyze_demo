@@ -178,7 +178,12 @@ async def websocket_endpoint(ws: WebSocket):
             fc += 1
             _, buf = cv2.imencode(".jpg", result.rendered, [cv2.IMWRITE_JPEG_QUALITY, 50])
             await ws.send_bytes(buf.tobytes())
-            await ws.send_text(json.dumps({"type": "kps3d", "data": result.kps_3d.tolist()}))
+            await ws.send_text(json.dumps({
+                "type": "kps3d",
+                "data": result.kps_3d.tolist(),
+                "feature_value": float(round(fa.rep_feature_value, 1)),
+                "motion": result.motion,
+            }))
             await asyncio.sleep(max(0, fi - (time.monotonic() - t0)))
     except WebSocketDisconnect:
         logger.info("Client disconnected")

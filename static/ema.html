@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EMA + Motion Debounce 可视化</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#111; color:#ccc; font-family:'PingFang SC','Microsoft YaHei',monospace; padding:20px; max-width:100vw; overflow-x:hidden; display:flex; flex-direction:column; height:100vh; }
+  h1 { font-size:18px; margin-bottom:4px; flex-shrink:0; }
+  .sub { color:#666; font-size:12px; margin-bottom:16px; flex-shrink:0; }
+
+  .cols { display:flex; gap:20px; flex:1; min-height:0; }
+  .graph-box { flex:1; min-width:0; background:#1a1a1a; border:1px solid #333; border-radius:10px; padding:16px; overflow:hidden; display:flex; flex-direction:column; }
+  .graph-box h3 { font-size:12px; color:#888; margin-bottom:10px; flex-shrink:0; }
+  #main-canvas { width:100%; flex:1; min-height:200px; }
+  #strip-canvas { width:100%; height:48px; margin-top:8px; flex-shrink:0; }
+  .legend { margin-top:10px; display:flex; gap:16px; font-size:11px; color:#888; flex-wrap:wrap; flex-shrink:0; }
+  .legend span { display:flex; align-items:center; gap:4px; }
+  .legend .dot { display:inline-block; width:10px; height:10px; border-radius:50%; }
+  .legend .dash { display:inline-block; width:14px; height:0; border-top:2px dashed #aad; }
+
+  .panel { width:260px; display:flex; flex-direction:column; gap:16px; flex-shrink:0; }
+  .ctrl { background:#1a1a1a; border:1px solid #333; border-radius:10px; padding:16px; }
+  .ctrl h4 { font-size:12px; color:#666; margin-bottom:10px; letter-spacing:1px; }
+  .ctrl label { display:flex; justify-content:space-between; font-size:13px; margin-bottom:8px; }
+  .ctrl label .val { color:#4af; font-weight:bold; min-width:28px; text-align:right; }
+  .ctrl input[type=range] { width:100%; accent-color:#4af; }
+  button { width:100%; padding:10px; border:none; border-radius:6px; font-size:13px; font-weight:bold; cursor:pointer; margin-top:6px; }
+  .btn-spike { background:#a40; color:#fff; }
+  .btn-spike:hover { background:#c50; }
+  .btn-reset { background:#333; color:#ccc; }
+  .btn-reset:hover { background:#444; }
+
+  .status { background:#1a1a1a; border:1px solid #333; border-radius:10px; padding:16px; }
+  .status h4 { font-size:12px; color:#666; margin-bottom:10px; letter-spacing:1px; }
+  .status .row { display:flex; justify-content:space-between; font-size:12px; padding:3px 0; border-bottom:1px solid #222; }
+  .status .row .lbl { color:#888; }
+  .status .row .val { font-weight:bold; }
+  .ascent-color { color:#4f8; }
+  .descent-color { color:#f64; }
+  .static-color { color:#888; }
+
+  .btn-row { display:flex; gap:6px; }
+  .btn-row button { flex:1; }
+</style>
+</head>
+<body>
+
+<h1>EMA 平滑 + 方向去抖 · 信号流演示</h1>
+<p class="sub">模拟深蹲膝角追踪（~170°站直 ↔ ~90°蹲底），叠加高斯噪声模拟 3D 骨骼推理抖动</p>
+
+<div class="cols">
+  <div class="graph-box">
+    <h3>📈 特征值信号 + 动作阶段</h3>
+    <canvas id="main-canvas"></canvas>
+    <canvas id="strip-canvas"></canvas>
+    <div class="legend">
+      <span><span class="dot" style="background:#555"></span> 原始值（raw）</span>
+      <span><span class="dot" style="background:#4af"></span> EMA 平滑（α=<span id="lbl-alpha">0.25</span>）</span>
+      <span><span class="dash"></span> 真实值（无噪声基准）</span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="ctrl">
+      <h4>⚙ 参数</h4>
+      <label>播放速度 <span class="val" id="val-speed">15 fps</span></label>
+      <input type="range" id="rng-speed" min="2" max="60" step="1" value="15">
+      <label>EMA α <span class="val" id="val-alpha">0.25</span></label>
+      <input type="range" id="rng-alpha" min="0.05" max="1.0" step="0.01" value="0.25">
+      <label>去抖帧数 <span class="val" id="val-deb">4</span></label>
+      <input type="range" id="rng-deb" min="1" max="15" step="1" value="4">
+      <label>方向阈值 <span class="val" id="val-dthresh">1.0</span></label>
+      <input type="range" id="rng-dthresh" min="0.1" max="8" step="0.1" value="1.0">
+      <label>噪声强度 <span class="val" id="val-noise">2.0</span></label>
+      <input type="range" id="rng-noise" min="0" max="8" step="0.1" value="2.0">
+      <div class="btn-row">
+        <button id="btn-play"  style="background:#0a4;color:#fff">▶ 播放</button>
+        <button id="btn-step"  style="background:#444;color:#ccc">⏭ 单步</button>
+      </div>
+      <button class="btn-spike" id="btn-spike">💥 注入异常尖峰 (±40°)</button>
+      <button class="btn-reset" id="btn-reset">↺ 重置</button>
+    </div>
+
+    <div class="status">
+      <h4>📊 实时数值</h4>
+      <div class="row"><span class="lbl">原始 raw</span>    <span class="val" id="v-raw">--</span></div>
+      <div class="row"><span class="lbl">平滑 smooth</span> <span class="val" style="color:#4af" id="v-smooth">--</span></div>
+      <div class="row"><span class="lbl">delta (Δ)</span>   <span class="val" id="v-delta">--</span></div>
+      <div class="row"><span class="lbl">瞬时方向</span>    <span class="val" id="v-instant">--</span></div>
+      <div class="row"><span class="lbl">候选 + 计数</span>  <span class="val" id="v-candidate">--</span></div>
+      <div class="row"><span class="lbl">输出 motion</span>  <span class="val" id="v-motion">--</span></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// Signal generator
+// ============================================================
+const REP_FRAMES = 90;
+function genTrueValue(frameIdx) {
+  const f = frameIdx % REP_FRAMES;
+  if (f < 20)       return 170;
+  if (f < 45)       return 170 - (80 * (f-20)/25);
+  if (f < 60)       return 90;
+  if (f < 85)       return 90 + (80 * (f-60)/25);
+  return 170;
+}
+
+// ============================================================
+// State
+// ============================================================
+const HISTORY = 600;
+let buffer = [];
+let smoothVal = null;
+let motion = "static";
+let candidate = "static";
+let candidateCount = 0;
+
+function getParams() {
+  return {
+    speed: parseInt(document.getElementById("rng-speed").value),
+    alpha: parseFloat(document.getElementById("rng-alpha").value),
+    debounce: parseInt(document.getElementById("rng-deb").value),
+    dThresh: parseFloat(document.getElementById("rng-dthresh").value),
+    noise: parseFloat(document.getElementById("rng-noise").value),
+  };
+}
+
+function processFrame(trueVal, alpha, debounce, noiseStd, dThresh) {
+  const raw = trueVal + gaussianRandom() * noiseStd;
+  if (smoothVal === null) smoothVal = raw;
+  else smoothVal = alpha * raw + (1 - alpha) * smoothVal;
+  const prevSmooth = buffer.length > 0 ? buffer[buffer.length-1].smooth : smoothVal;
+  const delta = smoothVal - prevSmooth;
+
+  let instant;
+  if (delta > dThresh) instant = "ascent";
+  else if (delta < -dThresh) instant = "descent";
+  else instant = "static";
+
+  if (instant === candidate) { candidateCount++; }
+  else { candidate = instant; candidateCount = 1; }
+  if (candidateCount >= debounce) { motion = candidate; }
+
+  buffer.push({ raw, smooth: smoothVal, trueVal, motion, instant, delta, candidate, candidateCount });
+  if (buffer.length > HISTORY) buffer.shift();
+  return { raw, smooth: smoothVal, delta, instant, candidate, candidateCount, motion };
+}
+
+let _gaussSpare = null;
+function gaussianRandom() {
+  if (_gaussSpare !== null) { const t = _gaussSpare; _gaussSpare = null; return t; }
+  let u, v, s;
+  do { u = Math.random()*2-1; v = Math.random()*2-1; s = u*u+v*v; } while (s >= 1 || s === 0);
+  const f = Math.sqrt(-2 * Math.log(s) / s);
+  _gaussSpare = v * f;
+  return u * f;
+}
+
+// ============================================================
+// Canvas sizing — main canvas uses flex height, strip is fixed
+// ============================================================
+const mainCanvas = document.getElementById("main-canvas");
+const mainCtx = mainCanvas.getContext("2d");
+const stripCanvas = document.getElementById("strip-canvas");
+const stripCtx = stripCanvas.getContext("2d");
+
+function sizeAll() {
+  const dpr = window.devicePixelRatio || 1;
+  // main canvas: read actual CSS height (flex-driven)
+  const mr = mainCanvas.getBoundingClientRect();
+  mainCanvas.width = Math.round(mr.width * dpr);
+  mainCanvas.height = Math.round(mr.height * dpr);
+  // strip: fixed 48px CSS
+  const sr = stripCanvas.getBoundingClientRect();
+  stripCanvas.width = Math.round(sr.width * dpr);
+  stripCanvas.height = Math.round(48 * dpr);
+}
+sizeAll();
+window.addEventListener("resize", sizeAll);
+
+// ============================================================
+// Drawing
+// ============================================================
+function drawGraph() {
+  const ctx = mainCtx, W = mainCanvas.width, H = mainCanvas.height;
+  const dpr = window.devicePixelRatio || 1;
+  ctx.clearRect(0, 0, W, H);
+  if (buffer.length < 2) return;
+
+  const yMin = 70, yMax = 190;
+  const xScale = (W - 60*dpr) / (HISTORY - 1);
+  const xOff = 45 * dpr;
+  const yScale = (H - 40*dpr) / (yMax - yMin);
+  const x = i => xOff + i * xScale;
+  const y = v => H - 20*dpr - (v - yMin) * yScale;
+
+  // Grid
+  ctx.strokeStyle = "#222"; ctx.lineWidth = 1*dpr;
+  for (let gy = 80; gy <= 180; gy += 20) {
+    ctx.beginPath(); ctx.moveTo(xOff, y(gy)); ctx.lineTo(xOff+(buffer.length-1)*xScale, y(gy)); ctx.stroke();
+  }
+  // Thresholds
+  ctx.strokeStyle = "#555"; ctx.setLineDash([4*dpr, 6*dpr]); ctx.lineWidth = 1*dpr;
+  ctx.beginPath(); ctx.moveTo(xOff, y(165)); ctx.lineTo(xOff+(buffer.length-1)*xScale, y(165)); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(xOff, y(100)); ctx.lineTo(xOff+(buffer.length-1)*xScale, y(100)); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Y-axis labels
+  ctx.fillStyle = "#555"; ctx.font = `${10*dpr}px monospace`; ctx.textAlign = "right";
+  ctx.fillText("165°", xOff-4*dpr, y(165)+4*dpr);
+  ctx.fillText("100°", xOff-4*dpr, y(100)+4*dpr);
+  for (let gy = 80; gy <= 180; gy += 20) ctx.fillText(gy+"°", xOff-4*dpr, y(gy)+4*dpr);
+
+  ctx.save();
+  ctx.beginPath(); ctx.rect(xOff, 0, W-xOff, H); ctx.clip();
+
+  // Raw (grey, noisy)
+  ctx.strokeStyle = "rgba(128,128,128,0.5)"; ctx.lineWidth = 1*dpr;
+  ctx.beginPath();
+  for (let i = 0; i < buffer.length; i++) {
+    const px = x(i), py = y(buffer[i].raw);
+    i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+  }
+  ctx.stroke();
+
+  // True signal (dashed white-green)
+  ctx.strokeStyle = "rgba(170,210,200,0.55)"; ctx.lineWidth = 2*dpr;
+  ctx.setLineDash([6*dpr, 4*dpr]);
+  ctx.beginPath();
+  for (let i = 0; i < buffer.length; i++) {
+    const px = x(i), py = y(buffer[i].trueVal);
+    i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+  }
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // EMA smoothed (blue, thickest)
+  ctx.strokeStyle = "#4af"; ctx.lineWidth = 2.5*dpr;
+  ctx.beginPath();
+  for (let i = 0; i < buffer.length; i++) {
+    const px = x(i), py = y(buffer[i].smooth);
+    i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawStrip() {
+  const ctx = stripCtx, W = stripCanvas.width, H = stripCanvas.height;
+  const dpr = window.devicePixelRatio || 1;
+  ctx.clearRect(0, 0, W, H);
+  if (buffer.length < 2) return;
+
+  const colors = { ascent: "#4f8", descent: "#f64", static: "#333" };
+  const labels = { ascent: "⬆ 上升", descent: "⬇ 下降", static: "⏸ 静止" };
+  const xOff = 20 * dpr, stripW = (W - 40*dpr) / HISTORY;
+
+  for (let i = 0; i < buffer.length; i++) {
+    ctx.fillStyle = colors[buffer[i].motion] || "#333";
+    ctx.fillRect(xOff + i * stripW, 4*dpr, stripW + 1, H - 20*dpr);
+  }
+
+  const cur = buffer[buffer.length-1], curMotion = cur ? cur.motion : "static";
+  ctx.fillStyle = colors[curMotion] || "#333";
+  ctx.font = `bold ${11*dpr}px monospace`; ctx.textAlign = "right";
+  ctx.fillText(labels[curMotion] || "??", W - 20*dpr, H - 6*dpr);
+
+  ctx.strokeStyle = "#333"; ctx.lineWidth = 1*dpr;
+  ctx.beginPath(); ctx.moveTo(xOff, H - 16*dpr); ctx.lineTo(xOff + HISTORY * stripW, H - 16*dpr); ctx.stroke();
+
+  ctx.fillStyle = "#666"; ctx.font = `${9*dpr}px monospace`; ctx.textAlign = "left";
+  ctx.fillText("motion", xOff, 8*dpr + 9*dpr);
+}
+
+function updateDisplay(last) {
+  document.getElementById("v-raw").textContent = last.raw.toFixed(1) + "°";
+  document.getElementById("v-smooth").textContent = last.smooth.toFixed(1) + "°";
+  const d = last.delta, dSign = d >= 0 ? "+" : "";
+  document.getElementById("v-delta").textContent = dSign + d.toFixed(2);
+  document.getElementById("v-delta").style.color = d > 1 ? "#4f8" : d < -1 ? "#f64" : "#888";
+
+  const iMap = { ascent:"⬆ ASCENT", descent:"⬇ DESCENT", static:"⏸ STATIC" };
+  document.getElementById("v-instant").textContent = iMap[last.instant] || last.instant;
+  document.getElementById("v-instant").className = "val " + last.instant + "-color";
+
+  document.getElementById("v-candidate").textContent =
+    iMap[last.candidate] + " ×" + last.candidateCount + "/" + getParams().debounce;
+  document.getElementById("v-candidate").className = "val " + last.candidate + "-color";
+
+  const mMap = { ascent:"⬆ ASCENT ✓", descent:"⬇ DESCENT ✓", static:"⏸ STATIC" };
+  document.getElementById("v-motion").textContent = mMap[last.motion] || last.motion;
+  document.getElementById("v-motion").className = "val " + last.motion + "-color";
+
+  document.getElementById("lbl-alpha").textContent = getParams().alpha.toFixed(2);
+  document.getElementById("val-speed").textContent = getParams().speed + " fps";
+  document.getElementById("val-alpha").textContent = getParams().alpha.toFixed(2);
+  document.getElementById("val-deb").textContent = getParams().debounce;
+  document.getElementById("val-dthresh").textContent = getParams().dThresh.toFixed(1);
+  document.getElementById("val-noise").textContent = getParams().noise.toFixed(1);
+}
+
+// ============================================================
+// Animation loop
+// ============================================================
+let frameIdx = 0;
+let timerId = null;
+let running = false;
+
+function advanceOne() {
+  const { alpha, debounce, noise, dThresh } = getParams();
+  const tv = genTrueValue(frameIdx++);
+  const last = processFrame(tv, alpha, debounce, noise, dThresh);
+  drawGraph();
+  drawStrip();
+  updateDisplay(last);
+}
+
+function step() {
+  if (!running) return;
+  advanceOne();
+  timerId = setTimeout(step, 1000 / getParams().speed);
+}
+
+function togglePlay() {
+  if (running) { stopLoop(); } else { startLoop(); }
+}
+
+function startLoop() {
+  if (running) return;
+  running = true;
+  const btn = document.getElementById("btn-play");
+  btn.textContent = "⏸ 暂停"; btn.style.background = "#a80";
+  timerId = setTimeout(step, 0);
+}
+
+function stopLoop() {
+  running = false;
+  if (timerId !== null) { clearTimeout(timerId); timerId = null; }
+  const btn = document.getElementById("btn-play");
+  btn.textContent = "▶ 播放"; btn.style.background = "#0a4";
+}
+
+// ============================================================
+// Single step + long-press-to-repeat
+// ============================================================
+let stepTimer = null;
+
+function startStepRepeat(e) {
+  e.preventDefault();
+  if (running) stopLoop();
+  advanceOne();
+  // Start repeating at ~25fps (40ms) for responsive feel
+  stepTimer = setInterval(advanceOne, 40);
+}
+
+function stopStepRepeat(e) {
+  if (stepTimer !== null) { clearInterval(stepTimer); stepTimer = null; }
+}
+
+const btnStep = document.getElementById("btn-step");
+btnStep.addEventListener("mousedown", startStepRepeat);
+btnStep.addEventListener("touchstart", startStepRepeat, { passive: false });
+btnStep.addEventListener("mouseup", stopStepRepeat);
+btnStep.addEventListener("mouseleave", stopStepRepeat);
+btnStep.addEventListener("touchend", stopStepRepeat);
+btnStep.addEventListener("touchcancel", stopStepRepeat);
+
+// ============================================================
+// Other button handlers
+// ============================================================
+document.getElementById("btn-spike").addEventListener("click", () => {
+  const wasRunning = running;
+  if (wasRunning) stopLoop();
+  const { alpha, debounce, noise, dThresh } = getParams();
+  const spikeDir = Math.random() > 0.5 ? 1 : -1;
+  for (let s = 0; s < 3; s++) {
+    const tv = genTrueValue(frameIdx++) + spikeDir * (30 + Math.random() * 10);
+    processFrame(tv, alpha, debounce, noise, dThresh);
+  }
+  drawGraph(); drawStrip();
+  if (buffer.length > 0) updateDisplay(buffer[buffer.length-1]);
+  if (wasRunning) startLoop();
+});
+
+document.getElementById("btn-reset").addEventListener("click", () => {
+  stopLoop(); stopStepRepeat();
+  buffer = [];
+  smoothVal = null;
+  motion = "static"; candidate = "static"; candidateCount = 0;
+  frameIdx = 0;
+});
+
+document.getElementById("btn-play").addEventListener("click", togglePlay);
+
+// ============================================================
+// Init
+// ============================================================
+(function prefill() {
+  const { alpha, debounce, noise, dThresh } = getParams();
+  for (let i = 0; i < 400; i++) processFrame(genTrueValue(frameIdx++), alpha, debounce, noise, dThresh);
+})();
+drawGraph(); drawStrip();
+if (buffer.length > 0) updateDisplay(buffer[buffer.length-1]);
+
+["rng-speed","rng-alpha","rng-deb","rng-dthresh","rng-noise"].forEach(id => {
+  document.getElementById(id).addEventListener("input", () => {
+    stopLoop(); stopStepRepeat();
+    buffer = [];
+    smoothVal = null;
+    motion = "static"; candidate = "static"; candidateCount = 0;
+    frameIdx = 0;
+    const { alpha, debounce, noise, dThresh } = getParams();
+    for (let i = 0; i < 400; i++) processFrame(genTrueValue(frameIdx++), alpha, debounce, noise, dThresh);
+    drawGraph(); drawStrip();
+    if (buffer.length > 0) updateDisplay(buffer[buffer.length-1]);
+  });
+});
+</script>
+</body>
+</html>

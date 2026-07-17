@@ -30,6 +30,7 @@ class AnalysisResult:
     kps_3d: np.ndarray  # 3D 骨骼 (17, 3)
     violations: list[str] = field(default_factory=list)  # 违规规则 ID
     rep_counted: bool = False  # 本轮是否完成了一次动作计数
+    motion: str = ""  # 动作阶段: "descent" | "ascent" | "static"
 
 
 # H36M 关节点名称 → 索引 (0-16)
@@ -82,8 +83,14 @@ def _map_kp_names_to_indices(names: Iterable[str]) -> list[int]:
 
 
 class RepPhase(Enum):
-    UP = auto()  # 伸展态（站立 / 臂伸直）
+    UP = auto()    # 伸展态（站立 / 臂伸直）
     DOWN = auto()  # 收缩态（蹲到底 / 曲臂）
+
+
+class RepMotion(Enum):
+    DESCENT = auto()  # 下降期（下蹲 / 曲臂）
+    ASCENT = auto()   # 上升期（起身 / 伸展）
+    STATIC = auto()   # 静止期（顶部或底部保持）
 
 
 class RepCounter:
@@ -97,7 +104,7 @@ class RepCounter:
     - get_rep_count_direction(rule) -> str
     """
 
-    def __init__(self, rule: dict):
+    def __init__(self, rule: dict, ema_alpha: float = 0.25, motion_debounce: int = 4):
         self._rule = rule
         self._ceiling = get_rep_ceiling(rule)
         self._floor = get_rep_floor(rule)
@@ -109,6 +116,14 @@ class RepCounter:
         self._feature_max: float = float("-inf")
         self._rom_values: list[float] = []         # 每次完成的 ROM
         self._rep_timestamps: list[float] = []      # 每次完成的时间戳
+        self._raw_value: float = 0.0               # 最近一帧原始特征值
+        self._smooth_value: float | None = None     # EMA 平滑后的值（首帧直接赋值）
+        self._ema_alpha = ema_alpha
+        self._motion: RepMotion = RepMotion.STATIC
+        # 方向切换去抖
+        self._motion_candidate: RepMotion = RepMotion.STATIC
+        self._candidate_frames: int = 0
+        self._motion_debounce = motion_debounce
 
     # ------------------------------------------------------------------
     @property
@@ -118,6 +133,16 @@ class RepCounter:
     @property
     def phase(self) -> RepPhase:
         return self._phase
+
+    @property
+    def motion(self) -> RepMotion:
+        """当前动作阶段（下降/上升/静止）。"""
+        return self._motion
+
+    @property
+    def feature_value(self) -> float:
+        """EMA 平滑后的特征值（角度或距离）。"""
+        return self._smooth_value if self._smooth_value is not None else self._raw_value
 
     @property
     def rom_values(self) -> list[float]:
@@ -137,15 +162,45 @@ class RepCounter:
         Returns:
             True 当本帧完成了一次动作计数时。
         """
-        value = get_rep_feature_value(kps_3d, self._rule)
+        raw = get_rep_feature_value(kps_3d, self._rule)
+        self._raw_value = raw
+
+        # ── EMA 平滑 ──
+        if self._smooth_value is None:
+            self._smooth_value = raw
+        else:
+            self._smooth_value = self._ema_alpha * raw + (1 - self._ema_alpha) * self._smooth_value
+
+        # ── 平滑后的一阶导数 → 瞬时方向 ──
+        delta = self._smooth_value - (self._feature_prev_smooth if hasattr(self, "_feature_prev_smooth") else self._smooth_value)
+        self._feature_prev_smooth = self._smooth_value
+        if delta > 1:
+            instant = RepMotion.ASCENT
+        elif delta < -1:
+            instant = RepMotion.DESCENT
+        else:
+            instant = RepMotion.STATIC
+
+        # ── 方向去抖：连续 N 帧同一方向才切换 ──
+        if instant == self._motion_candidate:
+            self._candidate_frames += 1
+        else:
+            self._motion_candidate = instant
+            self._candidate_frames = 1
+
+        if self._candidate_frames >= self._motion_debounce:
+            self._motion = self._motion_candidate
+
+        # ── 用平滑值做 phase 判定（避免尖峰误触发）──
         prev = self._phase
+        value = self._smooth_value
 
         if value >= self._ceiling:
             self._phase = RepPhase.UP
         elif value <= self._floor:
             self._phase = RepPhase.DOWN
 
-        # 追踪本 rep 的特征最值
+        # 追踪本 rep 的特征最值（用平滑值）
         self._feature_min = min(self._feature_min, value)
         self._feature_max = max(self._feature_max, value)
 
@@ -176,6 +231,13 @@ class RepCounter:
         self._feature_max = float("-inf")
         self._rom_values.clear()
         self._rep_timestamps.clear()
+        self._raw_value = 0.0
+        self._smooth_value = None
+        self._motion = RepMotion.STATIC
+        self._motion_candidate = RepMotion.STATIC
+        self._candidate_frames = 0
+        if hasattr(self, "_feature_prev_smooth"):
+            del self._feature_prev_smooth
 
 
 class FrameAnalyzer:
@@ -233,6 +295,11 @@ class FrameAnalyzer:
         if self._frozen:
             return self._frozen.get("total_reps", 0)
         return self._rep_counter.count if self._rep_counter is not None else 0
+
+    @property
+    def rep_feature_value(self) -> float:
+        """当前重复特征值（角度/距离）。"""
+        return self._rep_counter.feature_value if self._rep_counter else 0.0
 
     @property
     def accuracy(self) -> float:
@@ -432,9 +499,11 @@ class FrameAnalyzer:
 
         rendered = H36M2dKeypointsRenderer.render_on_frame(frame, kp2d_h36m, alert_kps_2d)
 
+        motion = self._rep_counter.motion.name.lower() if self._rep_counter else ""
         return AnalysisResult(
             rendered=rendered,
             kps_3d=kps_3d,
             violations=violations,
             rep_counted=rep_counted,
+            motion=motion,
         )

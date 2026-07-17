@@ -81,7 +81,7 @@
         "p2": "左膝",
         "p3": "左膝",
         "p4": "左脚踝",
-        "top_threshold": 170,
+        "top_threshold": 160,
         "bottom_threshold": 100,
         "count_on": "down_up"
     },
