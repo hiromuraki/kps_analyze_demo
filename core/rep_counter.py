@@ -1,3 +1,6 @@
+from enum import Enum, auto
+import time
+
 import numpy as np
 
 
@@ -20,8 +23,9 @@ NODE_NAME_TO_INDEX = {
     "右肩": 14,
     "右肘": 15,
     "右手腕": 16,
-    "地面": -1
+    "地面": -1,
 }
+
 
 # ===================== 三个基础读取函数 =====================
 def get_rep_ceiling(rule: dict) -> float:
@@ -144,3 +148,163 @@ def get_rep_feature_value(kps_3d: np.ndarray, rule: dict) -> float:
 
     else:
         raise ValueError(f"不支持的rep_counting.type: {feat_type}, 仅支持 angle / distance")
+
+
+class RepPhase(Enum):
+    UP = auto()  # 伸展态（站立 / 臂伸直）
+    DOWN = auto()  # 收缩态（蹲到底 / 曲臂）
+
+
+class RepMotion(Enum):
+    DESCENT = auto()  # 下降期（下蹲 / 曲臂）
+    ASCENT = auto()  # 上升期（起身 / 伸展）
+    STATIC = auto()  # 静止期（顶部或底部保持）
+
+
+class RepCounter:
+    """
+    通用动作计数状态机。
+
+    依赖四个外部函数读取规则：
+    - get_rep_feature_value(kps_3d, rule) -> float
+    - get_rep_ceiling(rule) -> float
+    - get_rep_floor(rule) -> float
+    - get_rep_count_direction(rule) -> str
+    """
+
+    def __init__(self, rule: dict, ema_alpha: float = 0.25, motion_debounce: int = 4):
+        self._rule = rule
+        self._ceiling = get_rep_ceiling(rule)
+        self._floor = get_rep_floor(rule)
+        self._direction = get_rep_count_direction(rule)
+        self._phase = RepPhase.UP
+        self._count = 0
+        # per-rep ROM 追踪
+        self._feature_min: float = float("inf")
+        self._feature_max: float = float("-inf")
+        self._rom_values: list[float] = []  # 每次完成的 ROM
+        self._rep_timestamps: list[float] = []  # 每次完成的时间戳
+        self._raw_value: float = 0.0  # 最近一帧原始特征值
+        self._smooth_value: float | None = None  # EMA 平滑后的值（首帧直接赋值）
+        self._ema_alpha = ema_alpha
+        self._motion: RepMotion = RepMotion.STATIC
+        # 方向切换去抖
+        self._motion_candidate: RepMotion = RepMotion.STATIC
+        self._candidate_frames: int = 0
+        self._motion_debounce = motion_debounce
+
+    # ------------------------------------------------------------------
+    @property
+    def count(self) -> int:
+        return self._count
+
+    @property
+    def phase(self) -> RepPhase:
+        return self._phase
+
+    @property
+    def motion(self) -> RepMotion:
+        """当前动作阶段（下降/上升/静止）。"""
+        return self._motion
+
+    @property
+    def feature_value(self) -> float:
+        """EMA 平滑后的特征值（角度或距离）。"""
+        return self._smooth_value if self._smooth_value is not None else self._raw_value
+
+    @property
+    def rom_values(self) -> list[float]:
+        """每次动作重复的关节活动度（度）。"""
+        return list(self._rom_values)
+
+    @property
+    def rep_timestamps(self) -> list[float]:
+        """每次动作重复完成时的时间戳（秒）。"""
+        return list(self._rep_timestamps)
+
+    # ------------------------------------------------------------------
+    def update(self, kps_3d: np.ndarray) -> bool:
+        """
+        输入一帧 3D 骨骼，更新状态机。
+
+        Returns:
+            True 当本帧完成了一次动作计数时。
+        """
+        raw = get_rep_feature_value(kps_3d, self._rule)
+        self._raw_value = raw
+
+        # ── EMA 平滑 ──
+        if self._smooth_value is None:
+            self._smooth_value = raw
+        else:
+            self._smooth_value = self._ema_alpha * raw + (1 - self._ema_alpha) * self._smooth_value
+
+        # ── 平滑后的一阶导数 → 瞬时方向 ──
+        delta = self._smooth_value - (
+            self._feature_prev_smooth if hasattr(self, "_feature_prev_smooth") else self._smooth_value
+        )
+        self._feature_prev_smooth = self._smooth_value
+        if delta > 1:
+            instant = RepMotion.ASCENT
+        elif delta < -1:
+            instant = RepMotion.DESCENT
+        else:
+            instant = RepMotion.STATIC
+
+        # ── 方向去抖：连续 N 帧同一方向才切换 ──
+        if instant == self._motion_candidate:
+            self._candidate_frames += 1
+        else:
+            self._motion_candidate = instant
+            self._candidate_frames = 1
+
+        if self._candidate_frames >= self._motion_debounce:
+            self._motion = self._motion_candidate
+
+        # ── 用平滑值做 phase 判定（避免尖峰误触发）──
+        prev = self._phase
+        value = self._smooth_value
+
+        if value >= self._ceiling:
+            self._phase = RepPhase.UP
+        elif value <= self._floor:
+            self._phase = RepPhase.DOWN
+
+        # 追踪本 rep 的特征最值（用平滑值）
+        self._feature_min = min(self._feature_min, value)
+        self._feature_max = max(self._feature_max, value)
+
+        counted = False
+        if self._direction == "down_up":
+            if prev == RepPhase.DOWN and self._phase == RepPhase.UP:
+                self._count += 1
+                counted = True
+        else:  # "up_down"
+            if prev == RepPhase.UP and self._phase == RepPhase.DOWN:
+                self._count += 1
+                counted = True
+
+        if counted:
+            rom = self._feature_max - self._feature_min
+            self._rom_values.append(rom)
+            self._rep_timestamps.append(time.monotonic())
+            self._feature_min = float("inf")
+            self._feature_max = float("-inf")
+
+        return counted
+
+    def reset(self):
+        """重置计数器和 ROM 历史。"""
+        self._count = 0
+        self._phase = RepPhase.UP
+        self._feature_min = float("inf")
+        self._feature_max = float("-inf")
+        self._rom_values.clear()
+        self._rep_timestamps.clear()
+        self._raw_value = 0.0
+        self._smooth_value = None
+        self._motion = RepMotion.STATIC
+        self._motion_candidate = RepMotion.STATIC
+        self._candidate_frames = 0
+        if hasattr(self, "_feature_prev_smooth"):
+            del self._feature_prev_smooth
