@@ -1,0 +1,88 @@
+{
+    "action_no": "03",
+    "action_name": "高位下拉",
+    "rule_set": [
+        {
+            "rule_no": "R1",
+            "phase": [
+                "descent",
+                "static_down"
+            ],
+            "keypoints_mode": "2d",
+            "parts": [
+                {
+                    "rule_type": "夹角",
+                    "rule_dim": "线段夹角",
+                    "p1": "胸腔",
+                    "p2": "左肩",
+                    "p3": "左肩",
+                    "p4": "左肘",
+                    "min_value": 20,
+                    "max_value": 30
+                },
+                {
+                    "rule_type": "夹角",
+                    "rule_dim": "线段夹角",
+                    "p1": "胸腔",
+                    "p2": "右肩",
+                    "p3": "右肩",
+                    "p4": "右肘",
+                    "min_value": 20,
+                    "max_value": 30
+                }
+            ]
+        },
+        {
+            "rule_no": "R2",
+            "phase": [
+                "static_up"
+            ],
+            "keypoints_mode": "2d",
+            "parts": [
+                {
+                    "rule_type": "夹角",
+                    "rule_dim": "线段夹角",
+                    "p1": "左肩",
+                    "p2": "左肘",
+                    "p3": "左肘",
+                    "p4": "左手腕",
+                    "min_value": 150,
+                    "max_value": 180
+                },
+                {
+                    "rule_type": "夹角",
+                    "rule_dim": "线段夹角",
+                    "p1": "右肩",
+                    "p2": "右肘",
+                    "p3": "右肘",
+                    "p4": "右手腕",
+                    "min_value": 150,
+                    "max_value": 180
+                }
+            ]
+        },
+        {
+            "rule_no": "R3",
+            "phase": [
+                "all"
+            ],
+            "keypoints_mode": "2d",
+            "parts": [
+                {
+                    "rule_type": "水平夹角",
+                    "p1": "左肩",
+                    "p2": "右肩",
+                    "min_value": 0,
+                    "max_value": 5
+                }
+            ]
+        }
+    ],
+    "calories_per_rep": 0.25,
+    "balance_pairs": [
+        [
+            "左肘",
+            "右肘"
+        ]
+    ]
+}

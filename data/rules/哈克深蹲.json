@@ -1,0 +1,83 @@
+{
+    "action_no": "04",
+    "action_name": "哈克深蹲",
+    "rule_set": [
+        {
+            "rule_no": "R1",
+            "phase": ["static_down"],
+            "keypoints_mode": "3d",
+            "parts": [
+                {
+                    "rule_type": "夹角",
+                    "rule_dim": "线段夹角",
+                    "p1": "左髋",
+                    "p2": "左膝",
+                    "p3": "左膝",
+                    "p4": "左脚踝",
+                    "min_value": 90,
+                    "max_value": 115
+                },
+                {
+                    "rule_type": "夹角",
+                    "rule_dim": "线段夹角",
+                    "rule_ref": "无",
+                    "p1": "右髋",
+                    "p2": "右膝",
+                    "p3": "右膝",
+                    "p4": "右脚踝",
+                    "min_value": 90,
+                    "max_value": 115
+                }
+            ]
+        },
+        {
+            "rule_no": "R2",
+            "phase": ["static_up"],
+            "keypoints_mode": "3d",
+            "parts": [
+                {
+                    "rule_type": "夹角",
+                    "rule_dim": "线段夹角",
+                    "p1": "左髋",
+                    "p2": "左膝",
+                    "p3": "左膝",
+                    "p4": "左脚踝",
+                    "min_value": 170,
+                    "max_value": 180
+                },
+                {
+                    "rule_type": "夹角",
+                    "rule_dim": "线段夹角",
+                    "p1": "右髋",
+                    "p2": "右膝",
+                    "p3": "右膝",
+                    "p4": "右脚踝",
+                    "min_value": 170,
+                    "max_value": 180
+                }
+            ]
+        }
+    ],
+    "rep_counting": {
+        "type": "angle",
+        "p1": "左髋",
+        "p2": "左膝",
+        "p3": "左膝",
+        "p4": "左脚踝",
+        "top_threshold": 160,
+        "delta_threshold": 0.3,
+        "bottom_threshold": 115,
+        "count_on": "down_up"
+    },
+    "calories_per_rep": 0.5,
+    "balance_pairs": [
+        [
+            "左膝",
+            "右膝"
+        ],
+        [
+            "左髋",
+            "右髋"
+        ]
+    ]
+}

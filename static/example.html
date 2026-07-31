@@ -201,7 +201,7 @@ ws.onmessage = (e) => {
       setBtnState(m.state);
       updateStats(m);
     } else if (m.type === "kps3d") {
-      const motionMap = {descent:"⬇ 下降期", ascent:"⬆ 上升期", static:"⏸ 静止期"};
+      const motionMap = {descent:"⬇ 下降期", ascent:"⬆ 上升期", static_up:"⏸ 顶部", static_down:"⏸ 底部"};
       $("motion-phase").textContent = motionMap[m.motion] || "";
       $("feature-val").textContent = "特征值: " + ((m.feature_value || 0).toFixed(1)) + "°";
     } else if (m.type === "log" && m.text && m.text.startsWith("rep:")) {

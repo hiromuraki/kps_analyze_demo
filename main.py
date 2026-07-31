@@ -1,9 +1,10 @@
 from __future__ import annotations
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from core.video_source import CameraRgbVideoSource, MockRgbVideoSource, IRgbVideoSource
 from collections import deque
+from io import BytesIO
 from datetime import datetime
 import argparse
 import asyncio
@@ -11,6 +12,7 @@ import json
 import logging
 import time
 import cv2
+import numpy as np
 from core import (
     AnalysisResult,
     FrameAnalyzer,
@@ -32,18 +34,22 @@ parser.add_argument("--camera", type=int, default=None, help="Camera device inde
 parser.add_argument("--width", type=int, default=640, help="Camera capture width")
 parser.add_argument("--height", type=int, default=480, help="Camera capture height")
 parser.add_argument("--fps", type=float, default=30.0, help="Camera capture FPS")
-parser.add_argument("--video-path", default="./sample_data/small/example.mp4")
+parser.add_argument("--video-path", default="./sample_data/example-1/example.mp4")
+parser.add_argument(
+    "--mock-kp2d", default="./sample_data/example-1/example_2d_coco17_kps.npz", help="Mock 2D keypoints .npz path"
+)
+parser.add_argument("--mock-kp3d", default="./sample_data/example-1/example_3d_kps.npz", help="Mock 3D keypoints .npz path")
 args = parser.parse_args()
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
-def video_source_factory(camera_id: int | None) -> IRgbVideoSource:
+def video_source_factory(camera_id: int | None, video_path: str | None = None) -> IRgbVideoSource:
     """根据 camera_id 创建视频源。None=自动探测, -1=mock视频文件, >=0=真实摄像头。"""
-    if camera_id == -1:
+    if camera_id == -1 and video_path is not None:
         logger.info(f"Using mock video source with video file: {args.video_path}")
-        return MockRgbVideoSource(args.video_path)
+        return MockRgbVideoSource(video_path)
 
     if camera_id is None:
         cameras: list[int] = []
@@ -65,17 +71,13 @@ def video_source_factory(camera_id: int | None) -> IRgbVideoSource:
     return video_source
 
 
-def frame_analyzer_factory(mode_2d: str, mode_3d: str, pose_type: str) -> FrameAnalyzer:
+def frame_analyzer_factory(
+    mode_2d: str, mode_3d: str, pose_type: str, mock_kp2d: str = "", mock_kp3d: str = ""
+) -> FrameAnalyzer:
     pose_rule = load_rule(pose_type)
 
-    kp2d = (
-        RTMPose2dPoseExtractor() if mode_2d == "rtmpose"
-        else Mock2dExtractor("./sample_data/small/example_2d_coco17_kps.npz")
-    )
-    kp3d = (
-        MHFormer3dPoseReconstructor() if mode_3d == "mhformer"
-        else Mock3dReconstructor("./sample_data/small/example_3d_kps.npz")
-    )
+    kp2d = RTMPose2dPoseExtractor() if mode_2d == "rtmpose" else Mock2dExtractor(mock_kp2d)
+    kp3d = MHFormer3dPoseReconstructor() if mode_3d == "mhformer" else Mock3dReconstructor(mock_kp3d)
     logger.info(f"FrameAnalyzer: 2D={mode_2d}, 3D={mode_3d}, pose={pose_type}")
 
     return FrameAnalyzer(
@@ -114,6 +116,42 @@ async def set_pose(data: dict):
 async def get_history():
     """返回最近的训练历史列表。"""
     return {"ok": True, "data": list(_training_history)}
+
+
+H36M_BONES = [
+    [0,1],[1,2],[2,3], [0,4],[4,5],[5,6],
+    [0,7],[7,8],[8,9],[9,10], [8,11],[11,12],
+    [12,13],[8,14],[14,15],[15,16]
+]
+
+
+@app.post("/api/upload_npz")
+async def upload_npz(file: UploadFile = File(...)):
+    """上传 .npz 骨骼文件，返回帧数据用于规则构建器。"""
+    try:
+        contents = await file.read()
+        data = np.load(BytesIO(contents))
+    except Exception as e:
+        return {"status": "error", "message": f"无法解析 NPZ 文件: {e}"}
+
+    # 优先取 reconstruction key，否则取第一个
+    key = "reconstruction" if "reconstruction" in data else list(data.keys())[0]
+    kps = data[key]
+
+    # 去掉可能的 batch 维度 (1, frames, joints, 3) → (frames, joints, 3)
+    if kps.ndim == 4:
+        kps = kps.squeeze(0)
+
+    if kps.ndim != 3:
+        return {"status": "error", "message": f"不支持的数据形状: {kps.shape}，期望 (frames, joints, 3)"}
+
+    frames = kps.tolist()
+    return {
+        "status": "success",
+        "frames": frames,
+        "bones_topology": H36M_BONES,
+        "num_frames": len(frames),
+    }
 
 
 @app.get("/stats/{training_id}")
@@ -162,13 +200,15 @@ async def websocket_endpoint(ws: WebSocket):
 
     # 构建视频源和帧分析器
     global _analyzer, _camera
-    camera = video_source_factory(args.camera)
+    camera = video_source_factory(args.camera, args.video_path)
     if not camera.open():
         logger.error(f"Failed to open video source (camera={args.camera}, video_path={args.video_path})")
         await ws.close(code=1011, reason="Cannot open source")
         return
     _camera = camera
-    _analyzer = frame_analyzer = frame_analyzer_factory(args.analyzer_2d, args.analyzer_3d, selected_pose)
+    _analyzer = frame_analyzer = frame_analyzer_factory(
+        args.analyzer_2d, args.analyzer_3d, selected_pose, args.mock_kp2d, args.mock_kp3d
+    )
 
     # 进入主循环
     logger.info(f"Streaming started: {camera.width}x{camera.height}@{camera.fps:.0f}fps")
@@ -187,7 +227,9 @@ async def websocket_endpoint(ws: WebSocket):
 
             # 检测动作切换，重建 FrameAnalyzer
             if frame_analyzer.pose_name != selected_pose:
-                frame_analyzer = frame_analyzer_factory(args.analyzer_2d, args.analyzer_3d, selected_pose)
+                frame_analyzer = frame_analyzer_factory(
+                    args.analyzer_2d, args.analyzer_3d, selected_pose, args.mock_kp2d, args.mock_kp3d
+                )
 
             # (1) 捕获帧
             t = time.monotonic()
@@ -207,25 +249,30 @@ async def websocket_endpoint(ws: WebSocket):
 
             if result.rep_counted:
                 rep_msg = json.dumps(
-                    {"type": "log", "ts": datetime.now().strftime("%H:%M:%S"),
-                     "text": f"rep:{frame_analyzer.rep_count}"}
+                    {
+                        "type": "log",
+                        "ts": datetime.now().strftime("%H:%M:%S"),
+                        "text": f"rep:{frame_analyzer.rep_count}",
+                    }
                 )
                 await ws.send_text(rep_msg)
 
             # 每 30 帧推送统计数据
             if frame_count % 30 == 0:
-                stats_msg = json.dumps({
-                    "type": "stats",
-                    "state": frame_analyzer.state,
-                    "training_id": frame_analyzer.training_id,
-                    "accuracy": round(frame_analyzer.accuracy, 3),
-                    "rom": round(frame_analyzer.rom, 1),
-                    "balance_score": round(frame_analyzer.balance_score, 1),
-                    "density": round(frame_analyzer.density, 1),
-                    "calories": round(frame_analyzer.calories, 1),
-                    "total_reps": frame_analyzer.rep_count,
-                    "fatigue_score": round(frame_analyzer.fatigue_score, 1),
-                })
+                stats_msg = json.dumps(
+                    {
+                        "type": "stats",
+                        "state": frame_analyzer.state,
+                        "training_id": frame_analyzer.training_id,
+                        "accuracy": round(frame_analyzer.accuracy, 3),
+                        "rom": round(frame_analyzer.rom, 1),
+                        "balance_score": round(frame_analyzer.balance_score, 1),
+                        "density": round(frame_analyzer.density, 1),
+                        "calories": round(frame_analyzer.calories, 1),
+                        "total_reps": frame_analyzer.rep_count,
+                        "fatigue_score": round(frame_analyzer.fatigue_score, 1),
+                    }
+                )
                 await ws.send_text(stats_msg)
 
             # 首帧用于诊断
@@ -245,12 +292,14 @@ async def websocket_endpoint(ws: WebSocket):
 
             # (5) 发送 3D 骨骼数据（附 feature_value + motion）
             t = time.monotonic()
-            kps3d_msg = json.dumps({
-                "type": "kps3d",
-                "data": result.kps_3d.tolist(),
-                "feature_value": float(round(frame_analyzer.rep_feature_value, 1)),
-                "motion": result.motion,
-            })
+            kps3d_msg = json.dumps(
+                {
+                    "type": "kps3d",
+                    "data": result.kps_3d.tolist(),
+                    "feature_value": float(round(frame_analyzer.rep_feature_value, 1)),
+                    "motion": result.motion,
+                }
+            )
             await ws.send_text(kps3d_msg)
             total_ws_3d_ms += (time.monotonic() - t) * 1000
 
@@ -270,13 +319,13 @@ async def websocket_endpoint(ws: WebSocket):
             logger.info("No frames processed")
             return
 
-        avg_total   = (wall_elapsed / frame_count) * 1000
-        avg_cap     = total_capture_ms / frame_count
-        avg_ana     = total_analysis_ms / frame_count
-        avg_enc     = total_encode_ms / frame_count
-        avg_ws_vid  = total_ws_video_ms / frame_count
-        avg_ws_3d   = total_ws_3d_ms / frame_count
-        avg_other   = avg_total - (avg_cap + avg_ana + avg_enc + avg_ws_vid + avg_ws_3d)
+        avg_total = (wall_elapsed / frame_count) * 1000
+        avg_cap = total_capture_ms / frame_count
+        avg_ana = total_analysis_ms / frame_count
+        avg_enc = total_encode_ms / frame_count
+        avg_ws_vid = total_ws_video_ms / frame_count
+        avg_ws_3d = total_ws_3d_ms / frame_count
+        avg_other = avg_total - (avg_cap + avg_ana + avg_enc + avg_ws_vid + avg_ws_3d)
 
         logger.info("=" * 60)
         logger.info("  Per‑frame Timing Summary")

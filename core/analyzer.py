@@ -24,7 +24,7 @@ class AnalysisResult:
     kps_3d: np.ndarray  # 3D 骨骼 (17, 3)
     violations: list[str] = field(default_factory=list)  # 违规规则 ID
     rep_counted: bool = False  # 本轮是否完成了一次动作计数
-    motion: str = ""  # 动作阶段: "descent" | "ascent" | "static"
+    motion: str = ""  # 动作阶段: "descent" | "ascent" | "static_up" | "static_down"
 
 
 # H36M 关节点名称 → 索引 (0-16)
@@ -84,6 +84,7 @@ class FrameAnalyzer:
         pose_name: str,
         pose_rule: dict,
     ):
+        self._analyzer_id: str = str(uuid.uuid4())
         self._kp2d_extractor = kp2d_extractor
         self._kp3d_reconstructor = kp3d_reconstructor
         self._pose_name = pose_name
@@ -106,10 +107,22 @@ class FrameAnalyzer:
         # 冻结快照（stopped 时留存最后统计，避免属性返回 0）
         self._frozen: dict | None = None
 
+        # 构造完成日志
+        rc_info = ""
+        if self._rep_counter is not None:
+            rc = self._rep_counter
+            rc_info = f", ema_α={rc.ema_alpha}, debounce={rc.motion_debounce}f, Δ_thresh={rc.delta_threshold}"
+        logger.info(f"FrameAnalyzer ready: id={self._analyzer_id}, pose={pose_name}{rc_info}")
+
     @property
     def state(self) -> str:
         """当前状态：running / paused / stopped。"""
         return self._state
+
+    @property
+    def analyzer_id(self) -> str:
+        """当前分析器实例 ID（uuid4）。"""
+        return self._analyzer_id
 
     @property
     def training_id(self) -> str:
@@ -309,7 +322,8 @@ class FrameAnalyzer:
             alert_kps_2d: list[int] = []
         else:
             self._active_frames += 1
-            violations_raw, affected_keypoints = judge_pose(kps_3d, self._rule)
+            motion_str = self._rep_counter.motion.name.lower() if self._rep_counter else ""
+            violations_raw, affected_keypoints = judge_pose(kp2d_h36m, kps_3d, self._rule, motion=motion_str)
             rep_counted = self._rep_counter is not None and self._rep_counter.update(kps_3d)
             alert_kps_2d = _map_kp_names_to_indices(affected_keypoints)
 

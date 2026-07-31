@@ -115,8 +115,9 @@ function genTrueValue(frameIdx) {
 const HISTORY = 600;
 let buffer = [];
 let smoothVal = null;
-let motion = "static";
-let candidate = "static";
+let motion = "static_up";
+let phase = "UP";       // mirrors RepPhase
+let candidate = "static_up";
 let candidateCount = 0;
 
 function getParams() {
@@ -136,16 +137,20 @@ function processFrame(trueVal, alpha, debounce, noiseStd, dThresh) {
   const prevSmooth = buffer.length > 0 ? buffer[buffer.length-1].smooth : smoothVal;
   const delta = smoothVal - prevSmooth;
 
+  // Phase tracking (UP/DOWN based on ceiling/floor crossings)
+  if (smoothVal >= 165) phase = "UP";
+  else if (smoothVal <= 100) phase = "DOWN";
+
   let instant;
   if (delta > dThresh) instant = "ascent";
   else if (delta < -dThresh) instant = "descent";
-  else instant = "static";
+  else instant = (phase === "UP") ? "static_up" : "static_down";
 
   if (instant === candidate) { candidateCount++; }
   else { candidate = instant; candidateCount = 1; }
   if (candidateCount >= debounce) { motion = candidate; }
 
-  buffer.push({ raw, smooth: smoothVal, trueVal, motion, instant, delta, candidate, candidateCount });
+  buffer.push({ raw, smooth: smoothVal, trueVal, motion, instant, delta, candidate, candidateCount, phase });
   if (buffer.length > HISTORY) buffer.shift();
   return { raw, smooth: smoothVal, delta, instant, candidate, candidateCount, motion };
 }
@@ -255,8 +260,8 @@ function drawStrip() {
   ctx.clearRect(0, 0, W, H);
   if (buffer.length < 2) return;
 
-  const colors = { ascent: "#4f8", descent: "#f64", static: "#333" };
-  const labels = { ascent: "⬆ 上升", descent: "⬇ 下降", static: "⏸ 静止" };
+  const colors = { ascent: "#4f8", descent: "#f64", static_up: "#3a3a50", static_down: "#3a3040" };
+  const labels = { ascent: "⬆ 上升", descent: "⬇ 下降", static_up: "⏸ 顶部", static_down: "⏸ 底部" };
   const xOff = 20 * dpr, stripW = (W - 40*dpr) / HISTORY;
 
   for (let i = 0; i < buffer.length; i++) {
@@ -264,7 +269,7 @@ function drawStrip() {
     ctx.fillRect(xOff + i * stripW, 4*dpr, stripW + 1, H - 20*dpr);
   }
 
-  const cur = buffer[buffer.length-1], curMotion = cur ? cur.motion : "static";
+  const cur = buffer[buffer.length-1], curMotion = cur ? cur.motion : "static_up";
   ctx.fillStyle = colors[curMotion] || "#333";
   ctx.font = `bold ${11*dpr}px monospace`; ctx.textAlign = "right";
   ctx.fillText(labels[curMotion] || "??", W - 20*dpr, H - 6*dpr);
@@ -283,15 +288,15 @@ function updateDisplay(last) {
   document.getElementById("v-delta").textContent = dSign + d.toFixed(2);
   document.getElementById("v-delta").style.color = d > 1 ? "#4f8" : d < -1 ? "#f64" : "#888";
 
-  const iMap = { ascent:"⬆ ASCENT", descent:"⬇ DESCENT", static:"⏸ STATIC" };
+  const iMap = { ascent:"⬆ ASCENT", descent:"⬇ DESCENT", static_up:"⏸ UP", static_down:"⏸ DOWN" };
   document.getElementById("v-instant").textContent = iMap[last.instant] || last.instant;
-  document.getElementById("v-instant").className = "val " + last.instant + "-color";
+  document.getElementById("v-instant").className = "val " + (last.instant.startsWith("static") ? "static" : last.instant) + "-color";
 
   document.getElementById("v-candidate").textContent =
     iMap[last.candidate] + " ×" + last.candidateCount + "/" + getParams().debounce;
-  document.getElementById("v-candidate").className = "val " + last.candidate + "-color";
+  document.getElementById("v-candidate").className = "val " + (last.candidate.startsWith("static") ? "static" : last.candidate) + "-color";
 
-  const mMap = { ascent:"⬆ ASCENT ✓", descent:"⬇ DESCENT ✓", static:"⏸ STATIC" };
+  const mMap = { ascent:"⬆ ASCENT ✓", descent:"⬇ DESCENT ✓", static_up:"⏸ UP ✓", static_down:"⏸ DOWN ✓" };
   document.getElementById("v-motion").textContent = mMap[last.motion] || last.motion;
   document.getElementById("v-motion").className = "val " + last.motion + "-color";
 
@@ -390,7 +395,7 @@ document.getElementById("btn-reset").addEventListener("click", () => {
   stopLoop(); stopStepRepeat();
   buffer = [];
   smoothVal = null;
-  motion = "static"; candidate = "static"; candidateCount = 0;
+  motion = "static_up"; phase = "UP"; candidate = "static_up"; candidateCount = 0;
   frameIdx = 0;
 });
 
@@ -411,7 +416,7 @@ if (buffer.length > 0) updateDisplay(buffer[buffer.length-1]);
     stopLoop(); stopStepRepeat();
     buffer = [];
     smoothVal = null;
-    motion = "static"; candidate = "static"; candidateCount = 0;
+    motion = "static_up"; phase = "UP"; candidate = "static_up"; candidateCount = 0;
     frameIdx = 0;
     const { alpha, debounce, noise, dThresh } = getParams();
     for (let i = 0; i < 400; i++) processFrame(genTrueValue(frameIdx++), alpha, debounce, noise, dThresh);

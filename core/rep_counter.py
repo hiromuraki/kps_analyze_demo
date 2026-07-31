@@ -156,9 +156,10 @@ class RepPhase(Enum):
 
 
 class RepMotion(Enum):
-    DESCENT = auto()  # 下降期（下蹲 / 曲臂）
-    ASCENT = auto()  # 上升期（起身 / 伸展）
-    STATIC = auto()  # 静止期（顶部或底部保持）
+    DESCENT = auto()     # 下降期（下蹲 / 曲臂）
+    ASCENT = auto()      # 上升期（起身 / 伸展）
+    STATIC_UP = auto()   # 顶部保持（伸展态静止，如站直锁关节）
+    STATIC_DOWN = auto() # 底部保持（收缩态静止，如蹲到底）
 
 
 class RepCounter:
@@ -172,13 +173,15 @@ class RepCounter:
     - get_rep_count_direction(rule) -> str
     """
 
-    def __init__(self, rule: dict, ema_alpha: float = 0.25, motion_debounce: int = 4):
+    def __init__(self, rule: dict, ema_alpha: float = 0.25, motion_debounce: int = 4, delta_threshold: float | None = None):
         self._rule = rule
         self._ceiling = get_rep_ceiling(rule)
         self._floor = get_rep_floor(rule)
         self._direction = get_rep_count_direction(rule)
         self._phase = RepPhase.UP
         self._count = 0
+        rep_cfg = rule.get("rep_counting", {})
+        self._delta_threshold = delta_threshold if delta_threshold is not None else rep_cfg.get("delta_threshold", 1.0)
         # per-rep ROM 追踪
         self._feature_min: float = float("inf")
         self._feature_max: float = float("-inf")
@@ -187,9 +190,9 @@ class RepCounter:
         self._raw_value: float = 0.0  # 最近一帧原始特征值
         self._smooth_value: float | None = None  # EMA 平滑后的值（首帧直接赋值）
         self._ema_alpha = ema_alpha
-        self._motion: RepMotion = RepMotion.STATIC
+        self._motion: RepMotion = RepMotion.STATIC_UP
         # 方向切换去抖
-        self._motion_candidate: RepMotion = RepMotion.STATIC
+        self._motion_candidate: RepMotion = RepMotion.STATIC_UP
         self._candidate_frames: int = 0
         self._motion_debounce = motion_debounce
 
@@ -222,6 +225,21 @@ class RepCounter:
         """每次动作重复完成时的时间戳（秒）。"""
         return list(self._rep_timestamps)
 
+    @property
+    def ema_alpha(self) -> float:
+        """EMA 平滑系数。"""
+        return self._ema_alpha
+
+    @property
+    def motion_debounce(self) -> int:
+        """方向去抖帧数。"""
+        return self._motion_debounce
+
+    @property
+    def delta_threshold(self) -> float:
+        """方向切换的特征值变化阈值。"""
+        return self._delta_threshold
+
     # ------------------------------------------------------------------
     def update(self, kps_3d: np.ndarray) -> bool:
         """
@@ -244,12 +262,12 @@ class RepCounter:
             self._feature_prev_smooth if hasattr(self, "_feature_prev_smooth") else self._smooth_value
         )
         self._feature_prev_smooth = self._smooth_value
-        if delta > 1:
+        if delta > self._delta_threshold:
             instant = RepMotion.ASCENT
-        elif delta < -1:
+        elif delta < -self._delta_threshold:
             instant = RepMotion.DESCENT
         else:
-            instant = RepMotion.STATIC
+            instant = RepMotion.STATIC_UP if self._phase == RepPhase.UP else RepMotion.STATIC_DOWN
 
         # ── 方向去抖：连续 N 帧同一方向才切换 ──
         if instant == self._motion_candidate:
@@ -303,8 +321,8 @@ class RepCounter:
         self._rep_timestamps.clear()
         self._raw_value = 0.0
         self._smooth_value = None
-        self._motion = RepMotion.STATIC
-        self._motion_candidate = RepMotion.STATIC
+        self._motion = RepMotion.STATIC_UP
+        self._motion_candidate = RepMotion.STATIC_UP
         self._candidate_frames = 0
         if hasattr(self, "_feature_prev_smooth"):
             del self._feature_prev_smooth

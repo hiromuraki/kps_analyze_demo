@@ -166,7 +166,7 @@ ws.onmessage = (e) => {
       stats.fat.textContent = (msg.fatigue_score < 20 ? "轻微" : msg.fatigue_score < 50 ? "中度" : "显著") + " (" + msg.fatigue_score.toFixed(0) + ")";
     } else if (msg.type === "kps3d") {
       updateSkeleton(msg.data);
-      const motionMap = {descent:"⬇ 下降", ascent:"⬆ 上升", static:"⏸ 静止"};
+      const motionMap = {descent:"⬇ 下降", ascent:"⬆ 上升", static_up:"⏸ 顶部", static_down:"⏸ 底部"};
       stats.motion.textContent = motionMap[msg.motion] || "--";
       stats.fval.textContent = (msg.feature_value || 0).toFixed(1) + "°";
     } else if (msg.type === "log") {
