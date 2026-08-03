@@ -5,7 +5,8 @@
       "Bash(chmod +x /home/user/downloads/kps_analyze_demo/run-rule-builder.sh)",
       "Bash(read fn *)",
       "Bash(grep -q 'function __TRACKED_VAR__' static/rule-builder.html)",
-      "Bash(xxd)"
+      "Bash(xxd)",
+      "Bash(grep -v '^\\\\s*$')"
     ]
   }
 }
