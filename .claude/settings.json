@@ -6,7 +6,22 @@
       "Bash(read fn *)",
       "Bash(grep -q 'function __TRACKED_VAR__' static/rule-builder.html)",
       "Bash(xxd)",
-      "Bash(grep -v '^\\\\s*$')"
+      "Bash(grep -v '^\\\\s*$')",
+      "Bash(cp /home/user/downloads/kps_analyze_demo/core/geometry_math.py /home/user/downloads/kps_analyze/kps_analyze_fitness/core/geometry_math.py)",
+      "Read(//home/user/downloads/kps_analyze/kps_analyze_fitness/**)",
+      "Bash(python3 -c \"from core.geometry_math import Geometry2DMath, Geometry3DMath; assert abs\\(Geometry2DMath.three_point_angle\\(\\(0,0\\),\\(1,0\\),\\(0,1\\)\\)-90\\)<1e-9; assert Geometry3DMath.distance\\(\\(0,0,0\\),\\(3,4,0\\)\\)==5.0; print\\('ok'\\)\")",
+      "Bash(python3 -c \"import core.analyzer, core.pose_judger, core.rep_counter; print\\('imports ok'\\)\")",
+      "Bash(python3 scripts/smoke_stage2i_nofeedback.py)",
+      "Bash(python3 scripts/smoke_stage2_protocol.py)",
+      "Bash(python3 scripts/smoke_stage3_guidance.py)",
+      "Bash(python3 scripts/smoke_stage4_voice.py)",
+      "Bash(python3 scripts/smoke_stage5_report.py)",
+      "Bash(python3 -c ' *)",
+      "Bash(python3 /tmp/verify_lat_2d.py)"
+    ],
+    "additionalDirectories": [
+      "/home/user/downloads/kps_analyze/kps_analyze_fitness/core",
+      "/home/user/downloads/kps_analyze/kps_analyze_fitness/scripts"
     ]
   }
 }

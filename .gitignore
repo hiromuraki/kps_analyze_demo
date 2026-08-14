@@ -15,3 +15,8 @@ _unused/
 models/
 rtm-det-aidlite/qnnout/*
 mhformer-aidlite/qnnmodel/*
+
+# AI
+.claude
+.codex
+.agents
