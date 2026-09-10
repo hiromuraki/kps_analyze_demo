@@ -1,9 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
-uv sync --frozen && uv run example.py \
-    --analyzer-2d rtmpose \
-    --analyzer-3d mhformer \
+uv sync --frozen && uv run main.py \
+    --analyzer-2d mock \
+    --analyzer-3d mock \
     --camera -1 \
     --width 640 \
     --height 480 \

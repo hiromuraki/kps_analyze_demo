@@ -17,6 +17,6 @@ rtm-det-aidlite/qnnout/*
 mhformer-aidlite/qnnmodel/*
 
 # AI
+.agents
 .claude
 .codex
-.agents

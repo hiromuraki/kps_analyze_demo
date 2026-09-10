@@ -83,15 +83,44 @@ uv run main.py \
 
 浏览器打开 `http://localhost:2800`。
 
-### 2.4. 预设启动脚本
+### 2.4. EMA 演示页
 
-项目根目录提供 `run-*.sh` 便捷脚本，封装常用命令组合。
+`static/ema.html` 并非纯静态页面——它有一个配套的轻量服务 `static/ema.py`，把该页面作为首页返回，并提供 `/api/parse_kp3d` 解析浏览器上传的 3D H36M 骨骼 `.npz`（浏览器无法直接解析 numpy 的 npz 容器格式，这是该服务存在的唯一原因）。
 
-| 脚本                    | 模式    | 前端         | 说明                                                                 |
-| ----------------------- | ------- | ------------ | -------------------------------------------------------------------- |
-| `run-mock-example-1.sh` | 全 mock | 开发 UI      | 哈克深蹲预录数据                                                     |
-| `run-mock-example-2.sh` | 全 mock | 开发 UI      | 高位下拉预录数据                                                     |
-| `run-rule-builder.sh`   | 全 mock | Rule Builder | 规则编辑工具，启动后需要上传视频文件以及对应的 H36M 2D/3D 骨骼以使用 |
+```bash
+uv run static/ema.py
+```
+
+浏览器打开 `http://localhost:28080/`（端口 `28080`，与 `main.py` 的 `2800` 互不冲突，可同时运行）。
+
+页面分两个标签页，是否依赖服务端不同：
+
+| 标签页   | 数据来源                  | 依赖服务端    |
+| -------- | ------------------------- | ------------- |
+| 仿真     | 内置信号 + 可调噪声       | 否            |
+| 真实数据 | 上传视频 + 3D 骨骼 `.npz` | **是**        |
+
+> 直接用 `file://` 打开 `ema.html` 只能使用「仿真」标签页；「真实数据」标签页依赖 `/api/parse_kp3d`，服务未启动时上传会失败。
+>
+> 该接口只接受 **3D** 骨骼文件（坐标为 ±2 量级的归一化值）。2D 骨骼文件同样是 `(frames, 17, 3)` 形状（第三列是置信度），服务靠量纲区分并会明确拒绝。
+>
+> 示例数据：`sample_data/example-1/3d_kps.npz`（265 帧，哈克深蹲）。
+
+### 2.5. 预设启动脚本
+
+项目根目录提供 `run-*.sh` 便捷脚本，封装常用命令组合。端口由入口脚本决定：`main.py` → **2800**，`example.py` → **28001**。
+
+| 脚本                            | 入口        | 分析器             | 前端         | 说明                                                 |
+| ------------------------------- | ----------- | ------------------ | ------------ | ---------------------------------------------------- |
+| `run-half-mock-example-1.sh`    | `main.py`   | mock + mock        | 开发 UI      | 哈克深蹲预录数据（example-1）                        |
+| `run-half-mock-example-2.sh`    | `main.py`   | mock + mock        | 开发 UI      | 高位下拉预录数据（example-2）                        |
+| `run-full-mock-example-page.sh` | `main.py`   | mock + mock        | 开发 UI      | 与 example-1 等价（走默认视频/骨骼路径）             |
+| `run-half-mock-example-page.sh` | `example.py` | rtmpose + mhformer | AR Demo UI   | 走 `example.html`，需 QNN 模型                       |
+| `run-example-page.sh`           | `example.py` | rtmpose + mhformer | AR Demo UI   | 同上，固定摄像头 2                                   |
+| `run.sh`                        | `main.py`   | rtmpose + mhformer | 开发 UI      | 固定摄像头 2，需 QNN 模型                            |
+| `run-rule-builder.sh`           | `main.py`   | mock + mock        | Rule Builder | 规则编辑工具，启动后需上传视频及对应的 H36M 2D/3D 骨骼 |
+
+> 脚本名中的 `half` / `full` 与实际的 mock 程度并不对应：`run-half-mock-example-*.sh` 的 2D/3D 分析器**都是** mock，而 `run-half-mock-example-page.sh` 用的反而是真实分析器。请以上表中的参数为准。
 
 ## 3. 工作流
 
@@ -171,7 +200,8 @@ Mock 所用的 3D 骨骼文件路径由启动参数 `--mock-kp3d` 指定。
 | -------------------------- | ---- | -------------------------------------------------------------------------------------------------------- |
 | `static/index.html`        | 2800 | Debug/开发者 UI：3D 骨架（Three.js）、统计面板、训练历史、消息日志。支持 `?pose=<名称>` 查询参数预设动作 |
 | `static/rule-builder.html` | 2800 | 规则构建器：视频+骨骼预览、SVG 骨骼选择器、帧级别规则录制、JSON 导出                                     |
-| `static/ema.html`          | 任意 | EMA 平滑 + 方向去抖可视化演示（独立页面，无需服务端）                                                    |
+| `static/example.html`      | 28001 | AR 风格 Demo UI（已废弃，由 `example.py` 提供）                                                          |
+| `static/ema.html`          | 28080 | EMA 平滑 + 方向去抖可视化演示（需启动 `static/ema.py`，见 §2.4）                                                    |
 
 单条 WebSocket 承载多类消息：
 
@@ -338,6 +368,34 @@ Mock 所用的 3D 骨骼文件路径由启动参数 `--mock-kp3d` 指定。
 
 > 为了区分，采用新格式的规则文件用 `-new` 作为后缀。
 
+### 5.3. 已知问题：动作阶段 / 特征值显示为 `--` / `0.0°`
+
+**现象**：视频正常播放、骨架正常绘制、姿态判定也照常工作，但前端「动作阶段」恒为 `--`、「特征值」恒为 `0.0°`，且不计数。
+
+**原因**：动作阶段和特征值由 `RepCounter` 产生，而 `FrameAnalyzer` 只在规则文件含 `rep_counting` 块时才创建它（`core/analyzer.py`）。缺少该块时 `_rep_counter` 为 `None`，`motion` 恒为空串、`rep_feature_value` 恒为 `0.0`。
+
+姿态判定走的是另一条路（`judge_pose`）：它同时兼容 `rule_set` 与旧的 `rule_list`，并把缺失的 `phase` 当作「始终生效」。这正是「其他都正常、唯独阶段/特征值消失」的原因——两者分别由规则引擎和计数状态机驱动，只有后者依赖 `rep_counting`。
+
+**触发条件**：`main.py` 未显式指定动作时，默认取 `get_rule_names()[0]`，即 `data/rules/*.json` **按文件名 Unicode 码点排序的第一个**：
+
+```
+['倒蹬腿举', '哈克深蹲-new', '器械倒蹬', '标准俯卧撑', '高位下拉-new']
+```
+
+默认选中的 `倒蹬腿举` 没有 `rep_counting`。各规则文件的当前情况：
+
+| 规则文件       | 格式          | `rep_counting` |
+| -------------- | ------------- | -------------- |
+| `倒蹬腿举`     | 旧 `rule_list` | ✗（默认选中）  |
+| `器械倒蹬`     | 旧 `rule_list` | ✗              |
+| `高位下拉-new` | 新 `rule_set`  | ✗              |
+| `哈克深蹲-new` | 新 `rule_set`  | ✓              |
+| `标准俯卧撑`   | 旧 `rule_list` | ✓              |
+
+**规避**：在页面左侧 Poses 菜单切换到含 `rep_counting` 的动作（如 `哈克深蹲-new`），或通过 `POST /poses` 切换。注意动作需与视频内容匹配——阈值按所选动作计算，选错动作时结果不可用（例如用腿举的阈值去分析哈克深蹲视频）。
+
+**后续修复方向**：为 `main.py` 增加 `--pose` 参数并在 `run-*.sh` 中显式指定；不要把中文文件名的排序结果当作默认值；为 `高位下拉-new` 补上 `rep_counting`（否则 example-2 即使选对动作也会丢阶段与特征值）。
+
 ---
 
 ## 6. 目录结构
@@ -362,7 +420,8 @@ static/
 ├── index.html               # Debug/开发者 UI
 ├── example.html             # AR 风格 Demo UI（已废弃，已有正式项目）
 ├── rule-builder.html        # 规则构建器
-└── ema.html                 # EMA + 去抖可视化演示
+├── ema.html                 # EMA + 去抖可视化演示
+└── ema.py                   # ema.html 的辅助服务（端口 28080）
 run-rule-builder.sh          # 规则构建工具启动脚本
 run-*.sh                     # 预制启动脚本
 ```

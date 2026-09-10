@@ -43,6 +43,25 @@
 
   .btn-row { display:flex; gap:6px; }
   .btn-row button { flex:1; }
+
+  .upload-panel { width:360px; display:flex; flex-direction:column; gap:16px; flex-shrink:0; }
+  .tabs { display:flex; gap:6px; background:#1a1a1a; border:1px solid #333; border-radius:10px; padding:4px; }
+  .tab-btn { flex:1; padding:8px 4px; border:none; border-radius:7px; background:transparent; color:#888; font-size:12px; font-weight:bold; cursor:pointer; margin-top:0; }
+  .tab-btn.active { background:#2a3343; color:#9cf; }
+  .up-btn { display:flex; align-items:center; justify-content:center; gap:5px; padding:9px 10px; background:#2a3343; border:1px solid #475569; border-radius:6px; cursor:pointer; font-size:12px; color:#c8d0dc; margin-top:6px; }
+  .up-btn:hover { border-color:#2563eb; background:#2f3a4c; }
+  .up-btn.done { background:#065f46; border-color:#059669; color:#b8f0d0; }
+  .up-btn input { display:none; }
+  .leg-row { display:flex; gap:6px; margin-top:6px; }
+  .leg-btn { flex:1; padding:6px 4px; border:1px solid #333; border-radius:6px; background:#222; color:#888; font-size:12px; cursor:pointer; margin-top:0; }
+  .leg-btn.active { background:#164; border-color:#2a8; color:#dfd; }
+  #real-video-box { position:relative; width:100%; min-height:200px; background:#000; border-radius:6px; overflow:hidden; margin-top:8px; display:flex; align-items:center; justify-content:center; }
+  #real-video-box video { max-width:100%; max-height:300px; display:block; }
+  #real-video-box canvas { position:absolute; max-width:100%; max-height:300px; pointer-events:none; }
+  .hint { font-size:11px; color:#666; margin-top:6px; line-height:1.5; }
+  .hint.err { color:#f64; }
+  .disabled-note { opacity:0.4; pointer-events:none; }
+  input:disabled, button:disabled { opacity:0.35; cursor:not-allowed; }
 </style>
 </head>
 <body>
@@ -51,6 +70,28 @@
 <p class="sub">模拟深蹲膝角追踪（~170°站直 ↔ ~90°蹲底），叠加高斯噪声模拟 3D 骨骼推理抖动</p>
 
 <div class="cols">
+  <div class="upload-panel">
+    <div class="tabs">
+      <button class="tab-btn active" id="tab-sim">模拟数据</button>
+      <button class="tab-btn" id="tab-real">真实数据</button>
+    </div>
+
+    <div class="ctrl" id="real-panel" style="display:none">
+      <h4>📁 上传</h4>
+      <label class="up-btn" id="btn-video"><span>🎬 选择视频文件</span><input type="file" id="file-video" accept="video/*"></label>
+      <label class="up-btn" id="btn-3d"><span>🦴 选择 3D 骨骼(.npz)</span><input type="file" id="file-3d" accept=".npz"></label>
+      <div class="leg-row">
+        <button class="leg-btn active" id="leg-right">右腿</button>
+        <button class="leg-btn" id="leg-left">左腿</button>
+      </div>
+      <div id="real-video-box">
+        <video id="real-video" muted playsinline></video>
+        <canvas id="real-overlay"></canvas>
+      </div>
+      <div class="hint" id="real-hint">先选视频，再上传 3D 骨骼文件（.npz，形状 [帧][17点][x,y,z]），就绪后点右侧「播放」。</div>
+    </div>
+  </div>
+
   <div class="graph-box">
     <h3>📈 特征值信号 + 动作阶段</h3>
     <canvas id="main-canvas"></canvas>
@@ -81,6 +122,7 @@
       </div>
       <button class="btn-spike" id="btn-spike">💥 注入异常尖峰 (±40°)</button>
       <button class="btn-reset" id="btn-reset">↺ 重置</button>
+      <div class="hint" id="sim-only-note" style="display:none">播放速度 / 单步 / 尖峰注入 / 噪声强度仅用于模拟数据模式；真实数据模式下由视频播放进度驱动。播放中拖动 α / 去抖帧数 / 方向阈值从下一帧起生效；暂停时拖动会立即重算曲线。</div>
     </div>
 
     <div class="status">
@@ -119,6 +161,44 @@ let motion = "static_up";
 let phase = "UP";       // mirrors RepPhase
 let candidate = "static_up";
 let candidateCount = 0;
+
+// ============================================================
+// Real-data mode state (video + uploaded 3D H36M keypoints)
+// ============================================================
+// H36M 关节索引，对应 core/pose_judger.py 的 JOINT_INDEX
+const H36M_LEG = {
+  right: { hip: 1, knee: 2, ankle: 3 },
+  left:  { hip: 4, knee: 5, ankle: 6 },
+};
+let mode = "sim";           // "sim" | "real"
+let realFrames = null;      // [[ [x,y,z] x17 ], ...]
+let realLeg = "right";
+let realLastFrame = -1;
+let realRafId = null;
+
+function resetSignalFields() {
+  smoothVal = null;
+  motion = "static_up"; phase = "UP"; candidate = "static_up"; candidateCount = 0;
+}
+
+function resetSignalState() {
+  buffer = [];
+  resetSignalFields();
+  frameIdx = 0;
+}
+
+// 三点夹角（度）：以 knee 为顶点，hip/ankle 为端点 — 对应
+// core/geometry_math.py Geometry3DMath.three_point_angle（angle_between_vectors）
+function threePointAngleDeg(hip, knee, ankle) {
+  const vax = hip[0] - knee[0], vay = hip[1] - knee[1], vaz = hip[2] - knee[2];
+  const vbx = ankle[0] - knee[0], vby = ankle[1] - knee[1], vbz = ankle[2] - knee[2];
+  const na = Math.sqrt(vax*vax + vay*vay + vaz*vaz);
+  const nb = Math.sqrt(vbx*vbx + vby*vby + vbz*vbz);
+  if (na < 1e-6 || nb < 1e-6) return 0.0;
+  let cos = (vax*vbx + vay*vby + vaz*vbz) / (na*nb);
+  cos = Math.max(-1, Math.min(1, cos));
+  return Math.acos(cos) * 180 / Math.PI;
+}
 
 function getParams() {
   return {
@@ -228,7 +308,7 @@ function drawGraph() {
   ctx.beginPath();
   for (let i = 0; i < buffer.length; i++) {
     const px = x(i), py = y(buffer[i].raw);
-    i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+    (i === 0 || buffer[i-1].loopBreak) ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
   }
   ctx.stroke();
 
@@ -238,7 +318,7 @@ function drawGraph() {
   ctx.beginPath();
   for (let i = 0; i < buffer.length; i++) {
     const px = x(i), py = y(buffer[i].trueVal);
-    i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+    (i === 0 || buffer[i-1].loopBreak) ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
   }
   ctx.stroke();
   ctx.setLineDash([]);
@@ -248,7 +328,7 @@ function drawGraph() {
   ctx.beginPath();
   for (let i = 0; i < buffer.length; i++) {
     const px = x(i), py = y(buffer[i].smooth);
-    i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+    (i === 0 || buffer[i-1].loopBreak) ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
   }
   ctx.stroke();
   ctx.restore();
@@ -260,7 +340,7 @@ function drawStrip() {
   ctx.clearRect(0, 0, W, H);
   if (buffer.length < 2) return;
 
-  const colors = { ascent: "#4f8", descent: "#f64", static_up: "#3a3a50", static_down: "#3a3040" };
+  const colors = { ascent: "#4f8", descent: "#f64", static_up: "#3a3a3a", static_down: "#303030" };
   const labels = { ascent: "⬆ 上升", descent: "⬇ 下降", static_up: "⏸ 顶部", static_down: "⏸ 底部" };
   const xOff = 20 * dpr, stripW = (W - 40*dpr) / HISTORY;
 
@@ -298,7 +378,7 @@ function updateDisplay(last) {
 
   const mMap = { ascent:"⬆ ASCENT ✓", descent:"⬇ DESCENT ✓", static_up:"⏸ UP ✓", static_down:"⏸ DOWN ✓" };
   document.getElementById("v-motion").textContent = mMap[last.motion] || last.motion;
-  document.getElementById("v-motion").className = "val " + last.motion + "-color";
+  document.getElementById("v-motion").className = "val " + (last.motion.startsWith("static") ? "static" : last.motion) + "-color";
 
   document.getElementById("lbl-alpha").textContent = getParams().alpha.toFixed(2);
   document.getElementById("val-speed").textContent = getParams().speed + " fps";
@@ -393,13 +473,18 @@ document.getElementById("btn-spike").addEventListener("click", () => {
 
 document.getElementById("btn-reset").addEventListener("click", () => {
   stopLoop(); stopStepRepeat();
-  buffer = [];
-  smoothVal = null;
-  motion = "static_up"; phase = "UP"; candidate = "static_up"; candidateCount = 0;
-  frameIdx = 0;
+  resetSignalState();
+  if (mode === "real") {
+    stopRealPlay();
+    realLastFrame = -1;
+    realVideo.currentTime = 0;
+    drawGraph(); drawStrip();
+  }
 });
 
-document.getElementById("btn-play").addEventListener("click", togglePlay);
+document.getElementById("btn-play").addEventListener("click", () => {
+  if (mode === "real") { toggleRealPlay(); } else { togglePlay(); }
+});
 
 // ============================================================
 // Init
@@ -413,17 +498,218 @@ if (buffer.length > 0) updateDisplay(buffer[buffer.length-1]);
 
 ["rng-speed","rng-alpha","rng-deb","rng-dthresh","rng-noise"].forEach(id => {
   document.getElementById(id).addEventListener("input", () => {
-    stopLoop(); stopStepRepeat();
-    buffer = [];
-    smoothVal = null;
-    motion = "static_up"; phase = "UP"; candidate = "static_up"; candidateCount = 0;
-    frameIdx = 0;
+    if (mode === "real") {
+      // α / 去抖帧数 / 方向阈值作用于共享状态机，滑块拖动即时生效；
+      // 速度/噪声在真实模式下被禁用，不会走到这里。
+      if (running) {
+        // 播放中：新参数从下一帧起生效，不重置不倒回，颜色/曲线保持连续
+        if (buffer.length > 0) updateDisplay(buffer[buffer.length-1]);
+      } else {
+        // 暂停中：立即用已上传骨骼重算到当前视频帧并重绘，无需按播放即可看到效果
+        recomputeRealSignal();
+      }
+      return;
+    }
+    // 模拟模式：播放中参数从下一帧起即时生效，动画不中断；暂停时全量重算立即重绘
+    stopStepRepeat();
+    if (running) {
+      if (buffer.length > 0) updateDisplay(buffer[buffer.length-1]);
+      return;
+    }
+    resetSignalState();
     const { alpha, debounce, noise, dThresh } = getParams();
     for (let i = 0; i < 400; i++) processFrame(genTrueValue(frameIdx++), alpha, debounce, noise, dThresh);
     drawGraph(); drawStrip();
     if (buffer.length > 0) updateDisplay(buffer[buffer.length-1]);
   });
 });
+
+// ============================================================
+// Real-data mode wiring
+// ============================================================
+const realVideo = document.getElementById("real-video");
+realVideo.loop = true; // 自动循环播放：播完回到开头，realSyncTick 在回绕点重置信号状态
+const realOverlay = document.getElementById("real-overlay");
+const realOverlayCtx = realOverlay.getContext("2d");
+const realHint = document.getElementById("real-hint");
+
+function setRealHint(text, isErr) {
+  realHint.textContent = text;
+  realHint.className = "hint" + (isErr ? " err" : "");
+}
+
+function realReady() {
+  return !!(realVideo.src && realFrames && realFrames.length > 0);
+}
+
+document.getElementById("file-video").addEventListener("change", (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  realVideo.src = URL.createObjectURL(f);
+  realVideo.load();
+  document.getElementById("btn-video").classList.add("done");
+  realVideo.onloadedmetadata = () => {
+    realOverlay.width = realVideo.videoWidth || 640;
+    realOverlay.height = realVideo.videoHeight || 480;
+    setRealHint(realReady() ? "已就绪，点右侧「播放」开始。" : "视频已加载，等待 3D 骨骼文件…");
+  };
+});
+
+document.getElementById("file-3d").addEventListener("change", async (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  setRealHint("解析中…");
+  const fd = new FormData();
+  fd.append("file", f);
+  try {
+    const res = await fetch("/api/parse_kp3d", { method: "POST", body: fd }).then(r => r.json());
+    if (res.status !== "success") {
+      setRealHint("解析失败: " + res.message, true);
+      return;
+    }
+    realFrames = res.frames;
+    document.getElementById("btn-3d").classList.add("done");
+    setRealHint(realReady()
+      ? `已就绪（${res.num_frames} 帧骨骼），点右侧「播放」开始。`
+      : `骨骼已解析（${res.num_frames} 帧），等待视频文件…`);
+  } catch (err) {
+    setRealHint("上传失败: " + err, true);
+  }
+});
+
+function setLeg(leg) {
+  realLeg = leg;
+  document.getElementById("leg-right").classList.toggle("active", leg === "right");
+  document.getElementById("leg-left").classList.toggle("active", leg === "left");
+}
+document.getElementById("leg-right").addEventListener("click", () => setLeg("right"));
+document.getElementById("leg-left").addEventListener("click", () => setLeg("left"));
+
+function drawRealOverlay(frameNo) {
+  const ctx = realOverlayCtx, W = realOverlay.width, H = realOverlay.height;
+  ctx.clearRect(0, 0, W, H);
+  if (!realFrames || !realFrames[frameNo]) return;
+  const f = realFrames[frameNo];
+  const j = H36M_LEG[realLeg];
+  const pts = [f[j.hip], f[j.knee], f[j.ankle]];
+  ctx.strokeStyle = "#4af"; ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(pts[0][0], pts[0][1]);
+  ctx.lineTo(pts[1][0], pts[1][1]);
+  ctx.lineTo(pts[2][0], pts[2][1]);
+  ctx.stroke();
+  ctx.fillStyle = "#4f8";
+  pts.forEach(p => { ctx.beginPath(); ctx.arc(p[0], p[1], 5, 0, Math.PI*2); ctx.fill(); });
+}
+
+function realFeedFrame(frameNo) {
+  const f = realFrames[frameNo];
+  const j = H36M_LEG[realLeg];
+  const angle = threePointAngleDeg(f[j.hip], f[j.knee], f[j.ankle]);
+  const { alpha, debounce, dThresh } = getParams();
+  // 真实数据：noiseStd=0，trueVal=3D 三点夹角 → raw === trueVal，复用同一套 processFrame。
+  const last = processFrame(angle, alpha, debounce, 0, dThresh);
+  drawGraph(); drawStrip(); updateDisplay(last);
+  drawRealOverlay(frameNo);
+}
+
+function recomputeRealSignal() {
+  // 用当前 α/去抖/阈值对已上传骨骼重算，供暂停状态下即时反馈。
+  // 与真实播放共用同一套 processFrame 状态机，缓冲与视频进度保持同源。
+  resetSignalState();
+  if (!realFrames || !realFrames.length) { drawGraph(); drawStrip(); return; }
+  const { alpha, debounce, dThresh } = getParams();
+  const j = H36M_LEG[realLeg];
+  const nf = realFrames.length;
+  const hasVideo = !!(realVideo.duration && !isNaN(realVideo.duration));
+  let upto = nf; // 视频未加载：全量预览整条曲线
+  if (hasVideo) {
+    const i = Math.round((realVideo.currentTime / realVideo.duration) * (nf - 1));
+    upto = Math.max(1, Math.min(i + 1, nf));
+  }
+  for (let i = 0; i < upto; i++) {
+    const f = realFrames[i];
+    processFrame(threePointAngleDeg(f[j.hip], f[j.knee], f[j.ankle]), alpha, debounce, 0, dThresh);
+  }
+  // 有视频时与进度对齐，之后按「播放」无缝续跑；无视频时置 -1，
+  // 首次「播放」会清掉预览缓冲从头重建，避免与预览重复。
+  realLastFrame = hasVideo ? upto - 1 : -1;
+  drawGraph(); drawStrip();
+  if (buffer.length > 0) updateDisplay(buffer[buffer.length-1]);
+}
+
+function realSyncTick() {
+  if (mode !== "real" || !running) return;
+  realRafId = requestAnimationFrame(realSyncTick);
+  if (!realVideo.duration || realVideo.paused || !realFrames) return;
+  const nf = realFrames.length;
+  const i = Math.round((realVideo.currentTime / realVideo.duration) * (nf - 1));
+  const c = Math.max(0, Math.min(i, nf - 1));
+  if (c < realLastFrame) {
+    // 视频循环回绕（或手动往回拖）：只重置状态机字段、不清空缓冲，
+    // 并在回绕点打标记让曲线分段绘制——阶段条颜色保持连续不消失
+    if (buffer.length > 0) buffer[buffer.length-1].loopBreak = true;
+    resetSignalFields();
+  }
+  if (c !== realLastFrame) {
+    realLastFrame = c;
+    realFeedFrame(c);
+  }
+}
+
+function startRealPlay() {
+  if (!realReady()) { setRealHint("请先上传视频与 3D 骨骼文件。", true); return; }
+  if (realLastFrame === -1) resetSignalState(); // 从头播放：清掉预览缓冲，随视频重建
+  running = true;
+  const btn = document.getElementById("btn-play");
+  btn.textContent = "⏸ 暂停"; btn.style.background = "#a80";
+  realVideo.play().catch(() => {}); // play() 返回 Promise，兜底避免未处理拒绝
+  realRafId = requestAnimationFrame(realSyncTick);
+}
+
+function stopRealPlay() {
+  running = false;
+  if (realRafId !== null) { cancelAnimationFrame(realRafId); realRafId = null; }
+  realVideo.pause();
+  const btn = document.getElementById("btn-play");
+  btn.textContent = "▶ 播放"; btn.style.background = "#0a4";
+}
+
+function toggleRealPlay() {
+  // 自愈：running 与视频实际状态不一致（running=true 但视频已停）时，
+  // 优先恢复播放而不是走 stop 分支，避免「按钮怎么点都没反应」的卡死态。
+  if (running && !realVideo.paused) stopRealPlay(); else startRealPlay();
+}
+
+// ============================================================
+// Mode switch (模拟数据 / 真实数据)
+// ============================================================
+const SIM_ONLY_CONTROLS = ["rng-speed", "btn-step", "btn-spike", "rng-noise"];
+
+function setMode(next) {
+  if (mode === next) return;
+  stopLoop(); stopStepRepeat(); stopRealPlay();
+  mode = next;
+  document.getElementById("tab-sim").classList.toggle("active", mode === "sim");
+  document.getElementById("tab-real").classList.toggle("active", mode === "real");
+  document.getElementById("real-panel").style.display = mode === "real" ? "block" : "none";
+  document.getElementById("sim-only-note").style.display = mode === "real" ? "block" : "none";
+  SIM_ONLY_CONTROLS.forEach(id => { document.getElementById(id).disabled = mode === "real"; });
+
+  resetSignalState();
+  if (mode === "sim") {
+    const { alpha, debounce, noise, dThresh } = getParams();
+    for (let i = 0; i < 400; i++) processFrame(genTrueValue(frameIdx++), alpha, debounce, noise, dThresh);
+    drawGraph(); drawStrip();
+    if (buffer.length > 0) updateDisplay(buffer[buffer.length-1]);
+  } else {
+    realLastFrame = -1;
+    drawGraph(); drawStrip();
+    setRealHint(realReady() ? "已就绪，点右侧「播放」开始。" : "先选视频，再上传 3D 骨骼文件（.npz，形状 [帧][17点][x,y,z]），就绪后点右侧「播放」。");
+  }
+}
+document.getElementById("tab-sim").addEventListener("click", () => setMode("sim"));
+document.getElementById("tab-real").addEventListener("click", () => setMode("real"));
 </script>
 </body>
 </html>

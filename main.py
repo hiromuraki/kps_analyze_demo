@@ -34,11 +34,11 @@ parser.add_argument("--camera", type=int, default=None, help="Camera device inde
 parser.add_argument("--width", type=int, default=640, help="Camera capture width")
 parser.add_argument("--height", type=int, default=480, help="Camera capture height")
 parser.add_argument("--fps", type=float, default=30.0, help="Camera capture FPS")
-parser.add_argument("--video-path", default="./sample_data/example-1/example.mp4")
+parser.add_argument("--video-path", default="./sample_data/example-1/video.mp4")
 parser.add_argument(
-    "--mock-kp2d", default="./sample_data/example-1/example_2d_coco17_kps.npz", help="Mock 2D keypoints .npz path"
+    "--mock-kp2d", default="./sample_data/example-1/2d_coco17_kps.npz", help="Mock 2D keypoints .npz path"
 )
-parser.add_argument("--mock-kp3d", default="./sample_data/example-1/example_3d_kps.npz", help="Mock 3D keypoints .npz path")
+parser.add_argument("--mock-kp3d", default="./sample_data/example-1/3d_kps.npz", help="Mock 3D keypoints .npz path")
 args = parser.parse_args()
 
 app = FastAPI()
