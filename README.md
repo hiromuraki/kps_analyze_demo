@@ -88,17 +88,17 @@ uv run main.py \
 `static/ema.html` 并非纯静态页面——它有一个配套的轻量服务 `static/ema.py`，把该页面作为首页返回，并提供 `/api/parse_kp3d` 解析浏览器上传的 3D H36M 骨骼 `.npz`（浏览器无法直接解析 numpy 的 npz 容器格式，这是该服务存在的唯一原因）。
 
 ```bash
-uv run static/ema.py
+bash run-ema.sh
 ```
 
 浏览器打开 `http://localhost:28080/`（端口 `28080`，与 `main.py` 的 `2800` 互不冲突，可同时运行）。
 
 页面分两个标签页，是否依赖服务端不同：
 
-| 标签页   | 数据来源                  | 依赖服务端    |
-| -------- | ------------------------- | ------------- |
-| 仿真     | 内置信号 + 可调噪声       | 否            |
-| 真实数据 | 上传视频 + 3D 骨骼 `.npz` | **是**        |
+| 标签页   | 数据来源                  | 依赖服务端 |
+| -------- | ------------------------- | ---------- |
+| 仿真     | 内置信号 + 可调噪声       | 否         |
+| 真实数据 | 上传视频 + 3D 骨骼 `.npz` | **是**     |
 
 > 直接用 `file://` 打开 `ema.html` 只能使用「仿真」标签页；「真实数据」标签页依赖 `/api/parse_kp3d`，服务未启动时上传会失败。
 >
@@ -108,19 +108,24 @@ uv run static/ema.py
 
 ### 2.5. 预设启动脚本
 
-项目根目录提供 `run-*.sh` 便捷脚本，封装常用命令组合。端口由入口脚本决定：`main.py` → **2800**，`example.py` → **28001**。
+项目根目录提供 `run-*.sh` 便捷脚本，封装常用命令组合。所有脚本均以 `uv sync --frozen` 开头。
 
-| 脚本                            | 入口        | 分析器             | 前端         | 说明                                                 |
-| ------------------------------- | ----------- | ------------------ | ------------ | ---------------------------------------------------- |
-| `run-half-mock-example-1.sh`    | `main.py`   | mock + mock        | 开发 UI      | 哈克深蹲预录数据（example-1）                        |
-| `run-half-mock-example-2.sh`    | `main.py`   | mock + mock        | 开发 UI      | 高位下拉预录数据（example-2）                        |
-| `run-full-mock-example-page.sh` | `main.py`   | mock + mock        | 开发 UI      | 与 example-1 等价（走默认视频/骨骼路径）             |
-| `run-half-mock-example-page.sh` | `example.py` | rtmpose + mhformer | AR Demo UI   | 走 `example.html`，需 QNN 模型                       |
-| `run-example-page.sh`           | `example.py` | rtmpose + mhformer | AR Demo UI   | 同上，固定摄像头 2                                   |
-| `run.sh`                        | `main.py`   | rtmpose + mhformer | 开发 UI      | 固定摄像头 2，需 QNN 模型                            |
-| `run-rule-builder.sh`           | `main.py`   | mock + mock        | Rule Builder | 规则编辑工具，启动后需上传视频及对应的 H36M 2D/3D 骨骼 |
+**命名约定：**
 
-> 脚本名中的 `half` / `full` 与实际的 mock 程度并不对应：`run-half-mock-example-*.sh` 的 2D/3D 分析器**都是** mock，而 `run-half-mock-example-page.sh` 用的反而是真实分析器。请以上表中的参数为准。
+- **full-mock** —— 视频源与 2D/3D 分析器**全部** mock（预录 `.mp4` + 缓存 `.npz`），无需任何硬件。
+- **half-mock** —— 仅视频源 mock（预录 `.mp4` 代替摄像头），2D/3D 分析器为真实的 `rtmpose` + `mhformer`，需 QNN 模型可用。
+
+| 脚本                         | 模式      | 入口            | 2D / 3D 分析器     | 数据源                          | 页面                 |
+| ---------------------------- | --------- | --------------- | ------------------ | ------------------------------- | -------------------- |
+| `run-half-mock-example-1.sh` | half mock | `main.py`       | rtmpose + mhformer | example-1 视频（哈克深蹲）      | 开发 UI `:2800`      |
+| `run-full-mock-example-1.sh` | full mock | `main.py`       | mock + mock        | example-1 视频+骨骼（哈克深蹲） | 开发 UI `:2800`      |
+| `run-rule-builder.sh`        | full mock | `main.py`       | mock + mock        | 页面内上传                      | Rule Builder `:2800` |
+| `run.sh`                     | 实机      | `main.py`       | rtmpose + mhformer | 摄像头                          | 开发 UI `:2800`      |
+| `run-ema.sh`                 | —         | `static/ema.py` | —                  | 页面内上传                      | EMA 演示页 `:28080`  |
+
+> 目前只有 example-1 配有启动脚本。example-2（高位下拉）的数据仍可用，按 §2.1 的方式直接调用 `main.py` 并指定 `--video-path` / `--mock-kp2d` / `--mock-kp3d` 即可。
+>
+> 根目录下的 `_deprecated_*.sh` 是已废弃脚本（原 `example.py` / `example.html` 那套 AR Demo UI），保留仅供参考。
 
 ## 3. 工作流
 
@@ -196,12 +201,12 @@ Mock 所用的 3D 骨骼文件路径由启动参数 `--mock-kp3d` 指定。
 
 **8. 前端页面**
 
-| 页面                       | 端口 | 用途                                                                                                     |
-| -------------------------- | ---- | -------------------------------------------------------------------------------------------------------- |
-| `static/index.html`        | 2800 | Debug/开发者 UI：3D 骨架（Three.js）、统计面板、训练历史、消息日志。支持 `?pose=<名称>` 查询参数预设动作 |
-| `static/rule-builder.html` | 2800 | 规则构建器：视频+骨骼预览、SVG 骨骼选择器、帧级别规则录制、JSON 导出                                     |
+| 页面                       | 端口  | 用途                                                                                                     |
+| -------------------------- | ----- | -------------------------------------------------------------------------------------------------------- |
+| `static/index.html`        | 2800  | Debug/开发者 UI：3D 骨架（Three.js）、统计面板、训练历史、消息日志。支持 `?pose=<名称>` 查询参数预设动作 |
+| `static/rule-builder.html` | 2800  | 规则构建器：视频+骨骼预览、SVG 骨骼选择器、帧级别规则录制、JSON 导出                                     |
 | `static/example.html`      | 28001 | AR 风格 Demo UI（已废弃，由 `example.py` 提供）                                                          |
-| `static/ema.html`          | 28080 | EMA 平滑 + 方向去抖可视化演示（需启动 `static/ema.py`，见 §2.4）                                                    |
+| `static/ema.html`          | 28080 | EMA 平滑 + 方向去抖可视化演示（需启动 `static/ema.py`，见 §2.4）                                         |
 
 单条 WebSocket 承载多类消息：
 
@@ -384,8 +389,8 @@ Mock 所用的 3D 骨骼文件路径由启动参数 `--mock-kp3d` 指定。
 
 默认选中的 `倒蹬腿举` 没有 `rep_counting`。各规则文件的当前情况：
 
-| 规则文件       | 格式          | `rep_counting` |
-| -------------- | ------------- | -------------- |
+| 规则文件       | 格式           | `rep_counting` |
+| -------------- | -------------- | -------------- |
 | `倒蹬腿举`     | 旧 `rule_list` | ✗（默认选中）  |
 | `器械倒蹬`     | 旧 `rule_list` | ✗              |
 | `高位下拉-new` | 新 `rule_set`  | ✗              |
@@ -422,8 +427,12 @@ static/
 ├── rule-builder.html        # 规则构建器
 ├── ema.html                 # EMA + 去抖可视化演示
 └── ema.py                   # ema.html 的辅助服务（端口 28080）
+run-full-mock-example-1.sh   # 全 mock（example-1）
+run-half-mock-example-1.sh   # 预录视频 + 真实分析器（example-1）
 run-rule-builder.sh          # 规则构建工具启动脚本
-run-*.sh                     # 预制启动脚本
+run-ema.sh                   # EMA 演示页辅助服务（端口 28080）
+run.sh                       # 实机（摄像头 + 真实分析器）
+_deprecated_*.sh             # 已废弃脚本（AR Demo UI），保留仅供参考
 ```
 
 ## 7. Rule Builder
