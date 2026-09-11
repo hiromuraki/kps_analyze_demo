@@ -1,5 +1,6 @@
 from __future__ import annotations
 from pathlib import Path
+from typing import Literal
 from .interface import I3dPoseReconstructor
 import logging
 import sys
@@ -16,7 +17,11 @@ logger = logging.getLogger("kp3d_reconstructor")
 
 
 def _ensure_mhformer_imports() -> None:
-    """Lazy-import qnn_reconstruct (requires aidlite SDK) on first use."""
+    """把 ``mhformer-aidlite`` 加入 ``sys.path``，使 ``lite_demo.qnn_reconstruct`` 可被导入。
+
+    以模块级标志位保证只执行一次。真正的 ``import`` 推迟到首次 ``reconstruct()``，
+    避免无 QNN 硬件、缺 aidlite SDK 的环境在模块导入阶段就失败。
+    """
     global _mhformer_imported
     if _mhformer_imported:
         return
@@ -26,47 +31,38 @@ def _ensure_mhformer_imports() -> None:
 
 
 class MHFormer3dPoseReconstructor(I3dPoseReconstructor):
-    """Reconstruct 3D keypoints from H36M-format 2D keypoints using MHFormer.
+    """3D 重建器的 MHFormer 实现：时序 Transformer + QNN DSP 推理。
 
-    The underlying model is a temporal Transformer with a receptive field
-    of 351 frames (±175).  For sequences shorter than the window, edge
-    padding is applied automatically.  Supports both streaming (single
-    latest frame via ``frame_index=-1``) and offline (multi-frame via
-    ``frame_indices``) modes.
+    模型感受野为 351 帧（当前帧前后各 175 帧）。序列短于窗口时自动做边缘
+    填充；每帧的预测以该帧为中心的窗口为上下文。
 
-    Parameters
-    ----------
-    model_dir:
-        Directory containing ``qnn_model_info.json`` and the compiled
-        QNN model (``.aidem``).  Auto-detected when omitted.
-    image_width:
-        Image width in pixels for screen→NDC normalisation.  Default 640.
-    image_height:
-        Image height in pixels for screen→NDC normalisation.  Default 480.
-    disable_flip:
-        If ``True``, skip test-time horizontal-flip augmentation
-        (faster but slightly less accurate).  Recommended for real-time.
-    verbose:
-        If ``True``, print per-frame inference timing to stdout.
+    本实现依赖 QNN 硬件与 aidlite SDK。模型在首次调用 ``reconstruct()`` 时
+    才真正加载（惰性），因此构造本类本身不会占用 DSP 资源。
+
+    Args:
+        model_dir: 含 ``qnn_model_info.json`` 与编译后 ``.aidem`` 模型的目录。
+            省略时使用 ``mhformer-aidlite/qnnmodel``。
+        disable_flip: 为 ``True`` 时跳过测试时翻转增强（TTA）。速度更快、
+            精度略降，实时场景建议开启。
+        verbose: 为 ``True`` 时打印每帧推理耗时。
+
+    Note:
+        用完请调用 ``close()`` 释放 DSP 资源，或用 ``with`` 语句管理生命周期。
     """
 
     def __init__(
         self,
         model_dir: str | None = None,
-        image_width: float = 640.0,
-        image_height: float = 480.0,
         disable_flip: bool = False,
         verbose: bool = False,
     ) -> None:
         self._model_dir = model_dir or _DEFAULT_MODEL_DIR
-        self.image_width = image_width
-        self.image_height = image_height
         self._disable_flip = disable_flip
         self._verbose = verbose
         self._instance: QNN3DReconstructor | None = None
 
     # ------------------------------------------------------------------
-    # Lazy model instantiation (defers DSP load to first reconstruct())
+    # 惰性构造：把 DSP 加载推迟到首次 reconstruct()
     # ------------------------------------------------------------------
 
     @property
@@ -83,100 +79,94 @@ class MHFormer3dPoseReconstructor(I3dPoseReconstructor):
         return self._instance
 
     # ------------------------------------------------------------------
-    # Public methods
+    # 公开方法
     # ------------------------------------------------------------------
+    @property
+    def data_out(self) -> Literal["H36M_3D"]:
+        return "H36M_3D"
 
     def reconstruct(
         self,
-        keypoints_2d: np.ndarray,
-        frame_index: int = -1,
+        kps2d_seq: np.ndarray,
+        frame_indices: list[int],
+        frame_size: tuple[int, int],
         *,
-        frame_indices: list[int] | None = None,
         to_world: bool = True,
     ) -> np.ndarray:
-        """Lift 2D keypoints to 3D.
+        """从 2D 关键点序列重建指定帧的 3D 坐标。
 
-        Two calling conventions are supported:
+        契约见接口 ``I3dPoseReconstructor.reconstruct``。本实现补充如下：
 
-        * **Streaming** (default): ``frame_index`` — reconstruct a single
-          frame.  Negative values count from the end (``-1`` = latest).
-          Returns ``(17, 3)``.
-        * **Offline**: ``frame_indices`` — reconstruct an explicit list of
-          frames.  Returns ``(len(frame_indices), 17, 3)``.
+        - 负索引由**本层**解析。底层 ``QNN3DReconstructor`` 不解析负值，会把它
+          当作普通位置参与窗口计算，最终静默落到第 0 帧附近，因此必须在调用
+          底层前归一化为绝对索引。
+        - 索引越界时抛 ``IndexError``，避免底层在切片为空时报出难以定位的
+          numpy 错误。
+        - 每帧需一次 DSP 前向推理（开启 TTA 时为两次），开销远高于 mock 实现。
 
-        Parameters
-        ----------
-        keypoints_2d:
-            H36M-format 2D keypoints of shape ``(T, 17, 2)`` in pixel
-            coordinates, where *T* is the number of frames.
-        frame_index:
-            Single frame index to reconstruct.  Negative values are
-            resolved relative to *T* (e.g. ``-1`` = last frame).
-            Ignored when *frame_indices* is given.
-        frame_indices:
-            Explicit list of frame indices for multi-frame reconstruction.
-            When provided, *frame_index* is ignored.
-        to_world:
-            If ``True`` (default), transform from camera space to world
-            space using a fixed rotation and set root-joint *z* = 0.
+        Args:
+            to_world: 为 ``True``（默认）时，把结果从相机坐标系按固定旋转四元数
+                转到世界坐标系，并将根关节的 z 归零。注意这是**刚体旋转**——
+                它不改变关节夹角，只改变坐标数值与各轴尺度。
 
-        Returns
-        -------
-        np.ndarray
-            ``(17, 3)`` when using *frame_index*; ``(N, 17, 3)`` when
-            using *frame_indices*.  Coordinates are in world space when
-            *to_world* is ``True``.
+        Returns:
+            见接口说明：``shape=(N, 17, 3)``，``N == len(frame_indices)``。
+
+        Raises:
+            ValueError: ``keypoints_2d`` 形状不是 ``(T, 17, 2)``。
+            IndexError: 某个索引（负索引解析后）超出 ``[0, T)``。
         """
-        _validate_h36m_keypoints(keypoints_2d)
-        total_frames = keypoints_2d.shape[0]
+        _validate_h36m_keypoints(kps2d_seq)
+        total_frame_count = kps2d_seq.shape[0]
 
-        if frame_indices is not None:
-            # Multi-frame mode — return (N, 17, 3)
-            return self._reconstructor.reconstruct(
-                keypoints_2d=keypoints_2d,
-                image_width=self.image_width,
-                image_height=self.image_height,
-                to_world=to_world,
-                frame_indices=frame_indices,
-            )
+        image_width = frame_size[0]
+        image_height = frame_size[1]
+        
+        # 负索引必须在这里解析：底层 QNN3DReconstructor 不解析负值，
+        # 它会当成位置参与 max(0, idx - pad)，最终静默钳制到第 0 帧。
+        resolved_indices = [i + total_frame_count if i < 0 else i for i in frame_indices]
+        for requested, idx in zip(frame_indices, resolved_indices):
+            if idx < 0 or idx >= total_frame_count:
+                raise IndexError(
+                    f"frame index {requested} out of range for {total_frame_count} frames (resolved to {idx})"
+                )
 
-        # Single-frame mode — resolve negative index, return (17, 3)
-        idx = int(frame_index)
-        if idx < 0:
-            idx = total_frames + idx
-
-        if idx < 0 or idx >= total_frames:
-            raise IndexError(f"frame_index {frame_index} out of range for {total_frames} frames (resolved to {idx})")
-
-        result = self._reconstructor.reconstruct(
-            keypoints_2d=keypoints_2d,
-            image_width=self.image_width,
-            image_height=self.image_height,
+        # 接口约定返回 (N, 17, 3)
+        return self._reconstructor.reconstruct(
+            keypoints_2d=kps2d_seq,
+            image_width=image_width,
+            image_height=image_height,
             to_world=to_world,
-            frame_indices=[idx],
+            frame_indices=resolved_indices,
         )
-        # result shape (1, 17, 3) → squeeze to (17, 3)
-        return result[0]
 
     def close(self) -> None:
-        """Release QNN interpreter / DSP resources."""
+        """释放 QNN 解释器与占用的 DSP 资源。
+
+        可重复调用。释放后再次调用 ``reconstruct()`` 会触发模型重新加载。
+        """
         if self._instance is not None:
             self._instance.close()
             self._instance = None
 
     # ------------------------------------------------------------------
-    # Context manager
+    # 上下文管理器
     # ------------------------------------------------------------------
 
     def __enter__(self) -> MHFormer3dPoseReconstructor:
         return self
 
     def __exit__(self, *args: object) -> None:
+        """退出 ``with`` 块时释放模型资源。"""
         self.close()
 
 
 def _validate_h36m_keypoints(keypoints: np.ndarray) -> None:
-    """Raise a clear error if the keypoints don't look like H36M 17-point."""
+    """校验入参确实是 H36M 17 点的 2D 关键点序列。
+
+    Raises:
+        ValueError: 维度不为 3，或末两维不是 ``(17, 2)``。
+    """
     if keypoints.ndim != 3:
         raise ValueError(
             f"Expected H36M keypoints with shape (T, 17, 2), got ndim={keypoints.ndim} shape={keypoints.shape}"

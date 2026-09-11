@@ -18,7 +18,11 @@ _rtm_imported = False
 
 
 def _ensure_rtm_imports() -> None:
-    """Lazy-import rtm_vision (requires aidlite SDK) on first use."""
+    """把 ``rtm-det-aidlite`` 加入 ``sys.path``，使 ``rtm_vision`` 可被导入。
+
+    以模块级标志位保证只执行一次。真正的 ``import`` 推迟到首次 ``extract()``，
+    避免无 QNN 硬件、缺 aidlite SDK 的环境在模块导入阶段就失败。
+    """
     global _rtm_imported
     if _rtm_imported:
         return
@@ -28,24 +32,23 @@ def _ensure_rtm_imports() -> None:
 
 
 class RTMPose2dPoseExtractor(I2dPoseExtractor):
-    """Extract COCO-17 2D keypoints from a single RGB image.
+    """2D 提取器的 RTMPose 实现：RTMDet 检测 + RTMPose 关键点，QNN DSP 推理。
 
-    Wraps the RTMDet + RTMPose QNN inference pipeline.  By default returns
-    keypoints for the highest-scoring person only; pass ``return_all=True``
-    to get all detections.
+    支持多目标场景，默认只返回得分最高者的关键点，可用 ``extract()`` 的
+    ``return_all`` 取回全部检出结果。
 
-    Parameters
-    ----------
-    det_model:
-        Path to RTMDet QNN model (``.aidem``).  Auto-detected when omitted.
-    pose_model:
-        Path to RTMPose QNN model (``.aidem``).  Auto-detected when omitted.
-    det_score_thr:
-        Bounding-box confidence threshold for the detector.
-    person_score_thr:
-        Minimum score for a detection to be considered a person (label=0).
-    topk:
-        Maximum number of persons to consider (highest detection scores first).
+    本实现依赖 QNN 硬件与 aidlite SDK。两个模型都在首次调用 ``extract()`` 时
+    才真正加载（惰性），因此构造本类本身不会占用 DSP 资源。
+
+    Args:
+        det_model: RTMDet 检测模型的 ``.aidem`` 路径，省略时使用内置默认路径。
+        pose_model: RTMPose 关键点模型的 ``.aidem`` 路径，省略时使用内置默认路径。
+        det_score_thr: 检测框置信度阈值，低于此值的框直接丢弃。
+        person_score_thr: 判定为"人"（label=0）所需的最低得分。
+        topk: 最多保留的目标数量，按检测得分从高到低取。
+
+    Note:
+        用完请调用 ``close()`` 释放 DSP 资源，或用 ``with`` 语句管理生命周期。
     """
 
     def __init__(
@@ -70,7 +73,7 @@ class RTMPose2dPoseExtractor(I2dPoseExtractor):
         return "COCO17"
 
     # ------------------------------------------------------------------
-    # Lazy model instantiation (defers DSP load to first extract())
+    # 惰性构造：把 DSP 加载推迟到首次 extract()
     # ------------------------------------------------------------------
 
     @property
@@ -96,41 +99,35 @@ class RTMPose2dPoseExtractor(I2dPoseExtractor):
         return self._pose
 
     # ------------------------------------------------------------------
-    # Public methods
+    # 公开方法
     # ------------------------------------------------------------------
 
     def extract(
         self,
-        image: np.ndarray,
+        frame: np.ndarray,
         *,
         return_all: bool = False,
     ) -> np.ndarray:
-        """Detect persons and estimate COCO-17 2D keypoints.
+        """检测人体并估计 COCO-17 2D 关键点。
 
-        Parameters
-        ----------
-        image:
-            BGR image array of shape ``(H, W, 3)``, dtype ``uint8``.
-        return_all:
-            If ``False`` (default), returns ``(17, 3)`` for the top-scoring
-            person.  If ``True``, returns ``(N, 17, 3)`` for all detected
-            persons.  When no person is found, returns a zero-filled array
-            of the same shape (``(17, 3)`` or ``(0, 17, 3)``).
+        Args:
+            frame: BGR 图像，``shape=(H, W, 3)``，``dtype=uint8``。
+            return_all: 为 ``False``（默认）时只返回得分最高者的 ``(17, 3)``；
+                为 ``True`` 时返回全部检出目标的 ``(N, 17, 3)``。
+                未检出任何人体时，返回同形状的全零数组。
 
-        Returns
-        -------
-        np.ndarray
-            ``(17, 3)`` or ``(N, 17, 3)`` — COCO-17 keypoints in pixel
-            coordinates ``(x, y, confidence)``.
+        Returns:
+            ``shape=(17, 3)`` 或 ``(N, 17, 3)``，每行为 ``[x, y, confidence]``
+            像素坐标与置信度，关节顺序为 COCO-17。
         """
-        det_result = self._det_instance(image)
+        det_result = self._det_instance(frame)
 
-        # Keep person detections above threshold
+        # 筛出置信度达标、且类别为「人」的检测框
         person_mask = (det_result.labels == 0) & (det_result.scores >= self._person_score_thr)
         person_boxes = det_result.bboxes[person_mask]
         person_scores = det_result.scores[person_mask]
 
-        # Top-k by score
+        # 按得分降序取前 topk 个
         if self._topk > 0 and person_scores.size > self._topk:
             idx = np.argsort(-person_scores)[: self._topk]
             person_boxes = person_boxes[idx]
@@ -138,13 +135,13 @@ class RTMPose2dPoseExtractor(I2dPoseExtractor):
 
         n_persons = len(person_boxes)
 
-        # ---- no-detection path ----
+        # ---- 未检出人体 ----
         if n_persons == 0:
             return np.zeros((17, 3), dtype=np.float32) if not return_all else np.empty((0, 17, 3), dtype=np.float32)
 
-        # ---- single-person fast path (default) ----
+        # ---- 单人快速路径（默认）----
         if not return_all:
-            result = self._pose_instance(image, person_boxes[:1])[0]
+            result = self._pose_instance(frame, person_boxes[:1])[0]
             n = min(17, len(result.keypoints))
             kp = np.zeros((17, 3), dtype=np.float32)
             kp[:n, 0] = result.keypoints[:n, 0]
@@ -152,8 +149,8 @@ class RTMPose2dPoseExtractor(I2dPoseExtractor):
             kp[:n, 2] = result.scores[:n]
             return kp
 
-        # ---- multi-person path ----
-        pose_results = self._pose_instance(image, person_boxes)
+        # ---- 多目标路径 ----
+        pose_results = self._pose_instance(frame, person_boxes)
         coco = np.zeros((n_persons, 17, 3), dtype=np.float32)
         for i, result in enumerate(pose_results):
             n = min(17, len(result.keypoints))
@@ -163,7 +160,10 @@ class RTMPose2dPoseExtractor(I2dPoseExtractor):
         return coco
 
     def close(self) -> None:
-        """Release QNN interpreter / DSP resources."""
+        """释放两个模型的 QNN 解释器与 DSP 资源。
+
+        可重复调用。释放后再次调用 ``extract()`` 会触发模型重新加载。
+        """
         for model in (self._det, self._pose):
             if model is not None:
                 model.close()
@@ -171,11 +171,12 @@ class RTMPose2dPoseExtractor(I2dPoseExtractor):
         self._pose = None
 
     # ------------------------------------------------------------------
-    # Context manager
+    # 上下文管理器
     # ------------------------------------------------------------------
 
     def __enter__(self) -> RTMPose2dPoseExtractor:
         return self
 
     def __exit__(self, *args: object) -> None:
+        """退出 ``with`` 块时释放模型资源。"""
         self.close()

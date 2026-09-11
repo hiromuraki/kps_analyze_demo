@@ -31,8 +31,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--analyzer-2d", choices=["mock", "rtmpose"], default="rtmpose")
 parser.add_argument("--analyzer-3d", choices=["mock", "mhformer"], default="mhformer")
 parser.add_argument("--camera", type=int, default=None, help="Camera device index")
-parser.add_argument("--width", type=int, default=640, help="Camera capture width")
-parser.add_argument("--height", type=int, default=480, help="Camera capture height")
+parser.add_argument("--camera-width", type=int, default=640, help="Camera capture width")
+parser.add_argument("--camera-height", type=int, default=480, help="Camera capture height")
 parser.add_argument("--fps", type=float, default=30.0, help="Camera capture FPS")
 parser.add_argument("--video-path", default="./sample_data/example-1/video.mp4")
 parser.add_argument(
@@ -65,14 +65,18 @@ def video_source_factory(camera_id: int | None, video_path: str | None = None) -
             logger.warning("No camera devices found, falling back to index 0")
             camera_id = 0
 
-    logger.info(f"Opening camera {camera_id}: {args.width}x{args.height}@{args.fps:.0f}fps")
-    video_source = CameraRgbVideoSource(camera_id=camera_id, width=args.width, height=args.height, fps=args.fps)
+    logger.info(f"Opening camera {camera_id}: {args.camera_width}x{args.camear_height}@{args.fps:.0f}fps")
+    video_source = CameraRgbVideoSource(camera_id=camera_id, width=args.camera_width, height=args.camera_height, fps=args.fps)
     video_source.flip_x = True
     return video_source
 
 
 def frame_analyzer_factory(
-    mode_2d: str, mode_3d: str, pose_type: str, mock_kp2d: str = "", mock_kp3d: str = ""
+    mode_2d: str, 
+    mode_3d: str,
+    pose_type: str,
+    mock_kp2d: str = "",
+    mock_kp3d: str = ""
 ) -> FrameAnalyzer:
     pose_rule = load_rule(pose_type)
 
@@ -207,7 +211,11 @@ async def websocket_endpoint(ws: WebSocket):
         return
     _camera = camera
     _analyzer = frame_analyzer = frame_analyzer_factory(
-        args.analyzer_2d, args.analyzer_3d, selected_pose, args.mock_kp2d, args.mock_kp3d
+        args.analyzer_2d, 
+        args.analyzer_3d,
+        selected_pose,
+        args.mock_kp2d,
+        args.mock_kp3d
     )
 
     # 进入主循环

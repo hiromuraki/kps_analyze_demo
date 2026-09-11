@@ -6,7 +6,10 @@ readme = "README.md"
 requires-python = ">=3.10,<3.11"
 dependencies = [
     "fastapi>=0.124.4",
-    "numpy>=1.24.4",
+    # 与系统 numpy (1.26.4) 保持同一 minor 版本：aidlite (QNN SDK) 的 .so 按系统
+    # numpy 编译，而 .venv 通过 --system-site-packages 才能看到 aidlite，
+    # 若 venv 里的 numpy 跨大版本会遮蔽系统版本，带来 ABI 隐患。
+    "numpy>=1.26,<1.27",
     "onnxruntime>=1.16.0,<1.20",
     "opencv-python>=4.8.0",
     "python-multipart>=0.0.32",

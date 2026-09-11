@@ -311,8 +311,9 @@ class FrameAnalyzer:
 
         kps_3d = self._kp3d_reconstructor.reconstruct(
             np.stack(list(self._frame_buffer)),
-            frame_index=-1,
-        )  # out: (17, 3)，取当前帧（-1）的 3D 重建结果
+            frame_indices=[-1],
+            frame_size=(frame.shape[1], frame.shape[0]),
+        )[0]  # out: (17, 3)，取当前帧（index=-1）的 3D 重建结果
 
         self._frame_n += 1
 

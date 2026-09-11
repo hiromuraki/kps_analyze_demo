@@ -7,7 +7,4 @@ uv sync --frozen && uv run main.py \
     --analyzer-2d mock \
     --mock-kp2d "./sample_data/example-1/2d_coco17_kps.npz" \
     --analyzer-3d mock \
-    --mock-kp3d "./sample_data/example-1/3d_kps.npz" \
-    --width 640 \
-    --height 480 \
-    --fps 30
+    --mock-kp3d "./sample_data/example-1/3d_kps.npz"

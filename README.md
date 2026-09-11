@@ -18,9 +18,40 @@ Mock 模式的意义：用预录视频（`.mp4`）和预提取的骨骼关键点
 # 安装 uv（如未安装）
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
+# 创建虚拟环境（必须带 --system-site-packages，原因见 §1.1）
+uv venv --system-site-packages
+
 # 同步依赖
-uv sync
+uv sync --frozen
 ```
+
+### 1.1. QNN SDK 与环境约束（重要）
+
+QNN 推理依赖高通的 **`aidlite` SDK**。它由 AidLux **预装在系统 python**（如 `/usr/local/lib/python3.10/dist-packages/aidlite/`），**不在 PyPI 上**，因此 uv / pip / conda 都无法安装它。
+
+由此带来三条约束：
+
+**（1）`.venv` 必须以 `--system-site-packages` 创建。** 普通 venv 是隔离的，看不到系统 site-packages，`--analyzer-2d rtmpose` / `--analyzer-3d mhformer` 会因缺少 `aidlite` 而失败。
+
+注意两个陷阱：`uv sync` 在 `.venv` 不存在时只会创建**普通（隔离）** venv；而 `uv venv --system-site-packages` 对已存在的 venv 会直接报错，不会就地修改。新克隆仓库后若真实分析器报 `No module named 'aidlite'`，用下面命令重建：
+
+```bash
+uv venv --system-site-packages --clear
+uv sync --frozen
+```
+
+**（2）该选项的语义是「合并，venv 优先」，不是替换。** `sys.path` 中 venv 的 `site-packages` 排在最前，之后才是用户级与系统目录；venv 里有的包用 venv 的，没有的才回落到系统。
+
+| 包 | 来源 |
+| --- | --- |
+| `aidlite` | 系统（venv 中没有） |
+| `numpy`、`cv2`、`fastapi` … | venv |
+
+**（3）`numpy` 钉在 `>=1.26,<1.27`，与系统版本（1.26.4）对齐。** `aidlite` 的 `.so` 按系统 numpy 编译，而 venv 的 numpy 会**遮蔽**系统版本——若跨大版本（如 2.x）则存在 ABI 隐患。约束写在 `pyproject.toml` 中并附有说明，改动前请先读。
+
+> **排障提示**：`aidlite` 是**惰性导入**的（`rtmpose.py` / `mhformer.py` 只在首次推理时才真正 import）。如果 `.venv` 被误建为隔离环境，`main.py` 会**正常启动、正常出画面**，直到第一帧推理才抛 `ModuleNotFoundError: No module named 'aidlite'`；该异常被 `main.py` 的兜底捕获，日志只留下一行 `Unexpected error in streaming loop`，WebSocket 随即断开。启动阶段完全看不出问题。
+>
+> 在**无 QNN 硬件的普通 PC** 上开发时，用 full-mock 脚本（§2.5）可完全绕过这些约束——mock 分析器只依赖 venv 内的 numpy / cv2 / fastapi。
 
 ## 2. 快速开始
 
