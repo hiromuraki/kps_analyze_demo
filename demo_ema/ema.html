@@ -52,6 +52,16 @@
   .up-btn:hover { border-color:#2563eb; background:#2f3a4c; }
   .up-btn.done { background:#065f46; border-color:#059669; color:#b8f0d0; }
   .up-btn input { display:none; }
+  .derive-btn { width:100%; font-weight:bold; }
+  .io-row { display:flex; align-items:center; gap:8px; }
+  .io-row .up-btn { flex:1; min-width:0; }
+  .src-dot { flex-shrink:0; width:12px; height:12px; border-radius:50%; background:#2a2a2a; border:1px solid #444; transition:background .2s, border-color .2s; }
+  .src-dot.derived { background:#2563eb; border-color:#60a5fa; }
+  .src-dot.manual  { background:#059669; border-color:#34d399; }
+  .derive-progress { display:none; margin-top:8px; }
+  .derive-progress .bar { height:4px; background:#222; border-radius:2px; overflow:hidden; }
+  .derive-progress .fill { height:100%; width:0; background:#2563eb; transition:width .2s linear; }
+  .derive-progress .txt { font-size:11px; color:#888; margin-top:4px; }
   .leg-row { display:flex; gap:6px; margin-top:6px; }
   .leg-btn { flex:1; padding:6px 4px; border:1px solid #333; border-radius:6px; background:#222; color:#888; font-size:12px; cursor:pointer; margin-top:0; }
   .leg-btn.active { background:#164; border-color:#2a8; color:#dfd; }
@@ -77,9 +87,21 @@
     </div>
 
     <div class="ctrl" id="real-panel" style="display:none">
-      <h4>📁 上传</h4>
-      <label class="up-btn" id="btn-video"><span>🎬 选择视频文件</span><input type="file" id="file-video" accept="video/*"></label>
-      <label class="up-btn" id="btn-3d"><span>🦴 选择 3D 骨骼(.npz)</span><input type="file" id="file-3d" accept=".npz"></label>
+      <h4>📁 数据来源</h4>
+      <label class="up-btn" id="btn-video"><span>🎬 视频文件</span><input type="file" id="file-video" accept="video/*"></label>
+      <button class="up-btn derive-btn" id="btn-derive" type="button"><span>✨ 自动推导 2D + 3D</span></button>
+      <div class="io-row">
+        <label class="up-btn" id="btn-2d" title="需为 H36M 关节顺序（如 2d_h36m_kps.npz）；传 COCO17 文件会取错腿部关节"><span>🦴 2D 骨骼 (.npz·H36M)</span><input type="file" id="file-2d" accept=".npz"></label>
+        <span class="src-dot" id="dot-2d" title="2D 骨骼来源 — 用于叠加层"></span>
+      </div>
+      <div class="io-row">
+        <label class="up-btn" id="btn-3d"><span>🦴 3D 骨骼 (.npz)</span><input type="file" id="file-3d" accept=".npz"></label>
+        <span class="src-dot" id="dot-3d" title="3D 骨骼来源 — 用于计算特征值"></span>
+      </div>
+      <div class="derive-progress" id="derive-progress">
+        <div class="bar"><div class="fill" id="derive-fill"></div></div>
+        <div class="txt" id="derive-txt"></div>
+      </div>
       <div class="leg-row">
         <button class="leg-btn active" id="leg-right">右腿</button>
         <button class="leg-btn" id="leg-left">左腿</button>
@@ -88,7 +110,7 @@
         <video id="real-video" muted playsinline></video>
         <canvas id="real-overlay"></canvas>
       </div>
-      <div class="hint" id="real-hint">先选视频，再上传 3D 骨骼文件（.npz，形状 [帧][17点][x,y,z]），就绪后点右侧「播放」。</div>
+      <div class="hint" id="real-hint">先选视频，再点「自动推导」，或手动上传 2D / 3D 骨骼文件（.npz）。2D 用于叠加层，3D 用于计算特征值。</div>
     </div>
   </div>
 
@@ -171,7 +193,15 @@ const H36M_LEG = {
   left:  { hip: 4, knee: 5, ankle: 6 },
 };
 let mode = "sim";           // "sim" | "real"
-let realFrames = null;      // [[ [x,y,z] x17 ], ...]
+// 2D / 3D 两条独立通道，各有自己的来源标记：
+//   2D 是像素坐标 → 叠加层（与视频画面同源，可直接按画布尺寸描点）
+//   3D 是归一化坐标 → 特征值（只取三点夹角，与坐标系约定无关）
+// 来源取值: null(未加载) | "derived"(自动推导) | "manual"(手动上传，优先)
+let realFrames2d = null;
+let realFrames3d = null;
+let realSource2d = null;
+let realSource3d = null;
+let realVideoFile = null;   // 选中的视频 File，供「自动推导」上传；objectURL 拿不到原始文件
 let realLeg = "right";
 let realLastFrame = -1;
 let realRafId = null;
@@ -539,41 +569,164 @@ function setRealHint(text, isErr) {
 }
 
 function realReady() {
-  return !!(realVideo.src && realFrames && realFrames.length > 0);
+  // 叠加层要 2D、特征值要 3D，两者齐备且已选视频才算就绪
+  return !!(realVideo.src
+    && realFrames2d && realFrames2d.length > 0
+    && realFrames3d && realFrames3d.length > 0);
+}
+
+function updateSourceDots() {
+  document.getElementById("dot-2d").className = "src-dot" + (realSource2d ? " " + realSource2d : "");
+  document.getElementById("dot-3d").className = "src-dot" + (realSource3d ? " " + realSource3d : "");
+}
+
+function clearBones() {
+  realFrames2d = realFrames3d = null;
+  realSource2d = realSource3d = null;
+  document.getElementById("btn-2d").classList.remove("done");
+  document.getElementById("btn-3d").classList.remove("done");
+  updateSourceDots();
+}
+
+function missingChannels() {
+  const missing = [];
+  if (!realVideo.src) missing.push("视频");
+  if (!realFrames2d) missing.push("2D 骨骼");
+  if (!realFrames3d) missing.push("3D 骨骼");
+  return missing;
 }
 
 document.getElementById("file-video").addEventListener("change", (e) => {
   const f = e.target.files[0];
   if (!f) return;
+  realVideoFile = f;                 // 保留原始 File，供「自动推导」上传
   realVideo.src = URL.createObjectURL(f);
   realVideo.load();
   document.getElementById("btn-video").classList.add("done");
+
+  // 换了视频，上一份骨骼（无论手动上传还是自动推导）都对应的是旧画面，一并清空。
+  // 这也让「手动上传优先」不会变成单向操作——重选视频即可解除。
+  clearBones();
+
   realVideo.onloadedmetadata = () => {
     realOverlay.width = realVideo.videoWidth || 640;
     realOverlay.height = realVideo.videoHeight || 480;
-    setRealHint(realReady() ? "已就绪，点右侧「播放」开始。" : "视频已加载，等待 3D 骨骼文件…");
+    setRealHint("视频已加载，点「自动推导」或手动上传 2D / 3D 骨骼文件（.npz）。");
   };
 });
 
-document.getElementById("file-3d").addEventListener("change", async (e) => {
-  const f = e.target.files[0];
+// 手动上传：2D 与 3D 两条通道各自独立，互不影响。上传即标记为 manual，
+// 会压过自动推导的结果；想回到自动推导，重选视频即可解除。
+async function uploadBones(fileInputId, btnId, api, channel) {
+  const f = document.getElementById(fileInputId).files[0];
   if (!f) return;
   setRealHint("解析中…");
   const fd = new FormData();
   fd.append("file", f);
   try {
-    const res = await fetch("/api/parse_kp3d", { method: "POST", body: fd }).then(r => r.json());
+    const res = await fetch(api, { method: "POST", body: fd }).then(r => r.json());
     if (res.status !== "success") {
       setRealHint("解析失败: " + res.message, true);
       return;
     }
-    realFrames = res.frames;
-    document.getElementById("btn-3d").classList.add("done");
-    setRealHint(realReady()
-      ? `已就绪（${res.num_frames} 帧骨骼），点右侧「播放」开始。`
-      : `骨骼已解析（${res.num_frames} 帧），等待视频文件…`);
+    if (channel === "2D") {
+      realFrames2d = res.frames;
+      realSource2d = "manual";
+    } else {
+      realFrames3d = res.frames;
+      realSource3d = "manual";
+    }
+    document.getElementById(btnId).classList.add("done");
+    updateSourceDots();
+
+    const missing = missingChannels();
+    setRealHint(missing.length
+      ? `已解析 ${channel} 骨骼（${res.num_frames} 帧，手动上传），还缺：${missing.join(" / ")}`
+      : `已就绪（手动上传 ${channel} 骨骼 ${res.num_frames} 帧），点右侧「播放」开始。`);
   } catch (err) {
     setRealHint("上传失败: " + err, true);
+  }
+}
+
+document.getElementById("file-2d").addEventListener("change",
+  () => uploadBones("file-2d", "btn-2d", "/api/parse_kp2d", "2D"));
+document.getElementById("file-3d").addEventListener("change",
+  () => uploadBones("file-3d", "btn-3d", "/api/parse_kp3d", "3D"));
+
+// ============================================================
+// 2D + 3D 骨骼自动推导（后台任务 + 进度轮询）
+//
+// 后端一次推导会同时产出 2D（叠加层）与 3D（特征值），因为 2D 本就是 3D
+// 升维前的中间产物，顺带返回不额外花时间。应用时逐通道判断：已手动上传的
+// 通道保持不动，只填充未被覆写的那条。
+// ============================================================
+const btnDerive = document.getElementById("btn-derive");
+const deriveBox = document.getElementById("derive-progress");
+const deriveFill = document.getElementById("derive-fill");
+const deriveTxt = document.getElementById("derive-txt");
+
+function setDeriving(on) {
+  btnDerive.disabled = on;
+  document.getElementById("file-2d").disabled = on;
+  document.getElementById("file-3d").disabled = on;
+  document.getElementById("file-video").disabled = on;
+  deriveBox.style.display = on ? "block" : "none";
+  if (!on) { deriveFill.style.width = "0"; deriveTxt.textContent = ""; }
+}
+
+async function pollDerive() {
+  for (;;) {
+    await new Promise(r => setTimeout(r, 600));
+    const s = await fetch("/api/derive_status").then(r => r.json());
+
+    if (s.state === "running") {
+      const pct = s.total > 0 ? Math.round(s.done / s.total * 100) : 0;
+      deriveFill.style.width = pct + "%";
+      deriveTxt.textContent =
+        `${s.phase === "3d" ? "3D 重建" : "2D 关键点"} ${s.done}/${s.total} 帧（${pct}%）`;
+      continue;
+    }
+
+    setDeriving(false);
+    if (s.state === "error") { setRealHint("推导失败：" + s.message, true); return; }
+    if (s.status !== "success") { setRealHint("推导结束，但未取到骨骼数据。", true); return; }
+
+    // 逐通道应用：手动上传过的通道优先生效，不被自动推导覆盖
+    const applied = [];
+    if (realSource2d !== "manual") { realFrames2d = s.frames_2d; realSource2d = "derived"; applied.push("2D"); }
+    if (realSource3d !== "manual") { realFrames3d = s.frames_3d; realSource3d = "derived"; applied.push("3D"); }
+    updateSourceDots();
+
+    const missing = missingChannels();
+    if (!applied.length) {
+      setRealHint("推导完成，但 2D 与 3D 均为手动上传（优先生效），未做替换。", true);
+    } else if (missing.length) {
+      setRealHint(`已推导 ${applied.join(" + ")} 骨骼（${s.num_frames} 帧），还缺：${missing.join(" / ")}`, true);
+    } else {
+      setRealHint(`已就绪（自动推导 ${applied.join(" + ")} 骨骼 ${s.num_frames} 帧），点右侧「播放」开始。`);
+    }
+    return;
+  }
+}
+
+btnDerive.addEventListener("click", async () => {
+  if (!realVideoFile) { setRealHint("请先选择视频文件。", true); return; }
+  if (realSource2d === "manual" && realSource3d === "manual") {
+    setRealHint("2D 与 3D 骨骼均为手动上传（优先生效）。如需自动推导，请重新选择视频。", true);
+    return;
+  }
+
+  setDeriving(true);
+  setRealHint("正在推导 2D + 3D 骨骼…");
+  try {
+    const fd = new FormData();
+    fd.append("file", realVideoFile, realVideoFile.name);
+    const r = await fetch("/api/derive_kp3d", { method: "POST", body: fd }).then(r => r.json());
+    if (r.status !== "started") throw new Error(r.message || "任务启动失败");
+    await pollDerive();
+  } catch (err) {
+    setDeriving(false);
+    setRealHint("推导失败：" + err, true);
   }
 });
 
@@ -588,8 +741,9 @@ document.getElementById("leg-left").addEventListener("click", () => setLeg("left
 function drawRealOverlay(frameNo) {
   const ctx = realOverlayCtx, W = realOverlay.width, H = realOverlay.height;
   ctx.clearRect(0, 0, W, H);
-  if (!realFrames || !realFrames[frameNo]) return;
-  const f = realFrames[frameNo];
+  // 用 2D 通道描点：像素坐标与画布同尺寸，无需投影即可贴合画面
+  if (!realFrames2d || !realFrames2d[frameNo]) return;
+  const f = realFrames2d[frameNo];
   const j = H36M_LEG[realLeg];
   const pts = [f[j.hip], f[j.knee], f[j.ankle]];
   ctx.strokeStyle = "#4af"; ctx.lineWidth = 3;
@@ -603,7 +757,7 @@ function drawRealOverlay(frameNo) {
 }
 
 function realFeedFrame(frameNo) {
-  const f = realFrames[frameNo];
+  const f = realFrames3d[frameNo];
   const j = H36M_LEG[realLeg];
   const angle = threePointAngleDeg(f[j.hip], f[j.knee], f[j.ankle]);
   const { alpha, debounce, dThresh } = getParams();
@@ -617,10 +771,10 @@ function recomputeRealSignal() {
   // 用当前 α/去抖/阈值对已上传骨骼重算，供暂停状态下即时反馈。
   // 与真实播放共用同一套 processFrame 状态机，缓冲与视频进度保持同源。
   resetSignalState();
-  if (!realFrames || !realFrames.length) { drawGraph(); drawStrip(); return; }
+  if (!realFrames3d || !realFrames3d.length) { drawGraph(); drawStrip(); return; }
   const { alpha, debounce, dThresh } = getParams();
   const j = H36M_LEG[realLeg];
-  const nf = realFrames.length;
+  const nf = realFrames3d.length;
   const hasVideo = !!(realVideo.duration && !isNaN(realVideo.duration));
   let upto = nf; // 视频未加载：全量预览整条曲线
   if (hasVideo) {
@@ -628,7 +782,7 @@ function recomputeRealSignal() {
     upto = Math.max(1, Math.min(i + 1, nf));
   }
   for (let i = 0; i < upto; i++) {
-    const f = realFrames[i];
+    const f = realFrames3d[i];
     processFrame(threePointAngleDeg(f[j.hip], f[j.knee], f[j.ankle]), alpha, debounce, 0, dThresh);
   }
   // 有视频时与进度对齐，之后按「播放」无缝续跑；无视频时置 -1，
@@ -641,8 +795,8 @@ function recomputeRealSignal() {
 function realSyncTick() {
   if (mode !== "real" || !running) return;
   realRafId = requestAnimationFrame(realSyncTick);
-  if (!realVideo.duration || realVideo.paused || !realFrames) return;
-  const nf = realFrames.length;
+  if (!realVideo.duration || realVideo.paused || !realFrames3d) return;
+  const nf = realFrames3d.length;
   const i = Math.round((realVideo.currentTime / realVideo.duration) * (nf - 1));
   const c = Math.max(0, Math.min(i, nf - 1));
   if (c < realLastFrame) {
@@ -705,7 +859,10 @@ function setMode(next) {
   } else {
     realLastFrame = -1;
     drawGraph(); drawStrip();
-    setRealHint(realReady() ? "已就绪，点右侧「播放」开始。" : "先选视频，再上传 3D 骨骼文件（.npz，形状 [帧][17点][x,y,z]），就绪后点右侧「播放」。");
+    updateSourceDots();
+    setRealHint(realReady()
+      ? "已就绪，点右侧「播放」开始。"
+      : "先选视频，然后「自动推导」或手动上传 3D 骨骼文件（.npz，形状 [帧][17点][x,y,z]）。");
   }
 }
 document.getElementById("tab-sim").addEventListener("click", () => setMode("sim"));

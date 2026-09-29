@@ -65,7 +65,7 @@ def video_source_factory(camera_id: int | None, video_path: str | None = None) -
             logger.warning("No camera devices found, falling back to index 0")
             camera_id = 0
 
-    logger.info(f"Opening camera {camera_id}: {args.camera_width}x{args.camear_height}@{args.fps:.0f}fps")
+    logger.info(f"Opening camera {camera_id}: {args.camera_width}x{args.camera_height}@{args.fps:.0f}fps")
     video_source = CameraRgbVideoSource(camera_id=camera_id, width=args.camera_width, height=args.camera_height, fps=args.fps)
     video_source.flip_x = True
     return video_source

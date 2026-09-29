@@ -103,7 +103,7 @@ uv run main.py \
     --analyzer-2d rtmpose \
     --analyzer-3d mhformer \
     --camera 0 \
-    --width 640 --height 480 --fps 30
+    --camera-width 640 --camera-height 480 --fps 30
 ```
 
 > `--camera` 值为目标摄像头的设备序号；`-1` 表示使用预录视频文件。
@@ -116,7 +116,7 @@ uv run main.py \
 
 ### 2.4. EMA 演示页
 
-`static/ema.html` 并非纯静态页面——它有一个配套的轻量服务 `static/ema.py`，把该页面作为首页返回，并提供 `/api/parse_kp3d` 解析浏览器上传的 3D H36M 骨骼 `.npz`（浏览器无法直接解析 numpy 的 npz 容器格式，这是该服务存在的唯一原因）。
+`demo_ema/ema.html` 并非纯静态页面——它有一个配套的轻量服务 `demo_ema/ema.py`，把该页面作为首页返回，并提供若干接口处理浏览器做不了的事（解析 numpy 的 npz 容器格式、调用 QNN 推理）。
 
 ```bash
 bash run-ema.sh
@@ -131,9 +131,22 @@ bash run-ema.sh
 | 仿真     | 内置信号 + 可调噪声       | 否         |
 | 真实数据 | 上传视频 + 3D 骨骼 `.npz` | **是**     |
 
-> 直接用 `file://` 打开 `ema.html` 只能使用「仿真」标签页；「真实数据」标签页依赖 `/api/parse_kp3d`，服务未启动时上传会失败。
+**服务端接口：**
+
+| 端点                 | 方法 | 用途                                                                                               |
+| -------------------- | ---- | -------------------------------------------------------------------------------------------------- |
+| `/api/parse_kp3d`    | POST | 解析上传的 3D H36M 骨骼 `.npz`（归一化坐标，±2 量级），返回逐帧 `[x, y, z]`，供**特征值计算**      |
+| `/api/parse_kp2d`    | POST | 解析上传的 2D H36M 骨骼 `.npz`（像素坐标，第三列为置信度），返回逐帧 `[x, y, conf]`，供**叠加层**  |
+| `/api/derive_kp3d`   | POST | **上传视频自动推导骨骼**：RTMPose 提 2D → MHFormer 升维 3D，全程走本机 QNN。立即返回，后台线程执行 |
+| `/api/derive_status` | GET  | 轮询推导进度；`state=done` 时附带 `frames_2d`（像素坐标）与 `frames_3d`（归一化坐标）              |
+
+> 直接用 `file://` 打开 `ema.html` 只能使用「仿真」标签页；「真实数据」标签页依赖上述接口，服务未启动时上传会失败。
 >
-> 该接口只接受 **3D** 骨骼文件（坐标为 ±2 量级的归一化值）。2D 骨骼文件同样是 `(frames, 17, 3)` 形状（第三列是置信度），服务靠量纲区分并会明确拒绝。
+> `parse_kp2d` / `parse_kp3d` 接受的文件形状相同（都是 `(frames, 17, 3)`），服务**靠量纲区分**：2D 的 x/y 是几百量级的像素坐标、第三列是 `[0,1]` 置信度；3D 的 x/y 在 ±2 之内。传错文件会被明确拒绝。
+>
+> 关节顺序必须是 **H36M**（与 `main.py` 一致）。传 COCO17 格式的文件不会报错，但会取到错误的关节。
+>
+> `/api/derive_kp3d` 实测约 **85 ms/帧**（RTMPose 约 67 ms + MHFormer 约 18 ms），故走后台线程 + 进度轮询；同一时刻只允许一个推导任务，结果只留在内存，服务重启即失效。
 >
 > 示例数据：`sample_data/example-1/3d_kps.npz`（265 帧，哈克深蹲）。
 
@@ -146,13 +159,13 @@ bash run-ema.sh
 - **full-mock** —— 视频源与 2D/3D 分析器**全部** mock（预录 `.mp4` + 缓存 `.npz`），无需任何硬件。
 - **half-mock** —— 仅视频源 mock（预录 `.mp4` 代替摄像头），2D/3D 分析器为真实的 `rtmpose` + `mhformer`，需 QNN 模型可用。
 
-| 脚本                         | 模式      | 入口            | 2D / 3D 分析器     | 数据源                          | 页面                 |
-| ---------------------------- | --------- | --------------- | ------------------ | ------------------------------- | -------------------- |
-| `run-half-mock-example-1.sh` | half mock | `main.py`       | rtmpose + mhformer | example-1 视频（哈克深蹲）      | 开发 UI `:2800`      |
-| `run-full-mock-example-1.sh` | full mock | `main.py`       | mock + mock        | example-1 视频+骨骼（哈克深蹲） | 开发 UI `:2800`      |
-| `run-rule-builder.sh`        | full mock | `main.py`       | mock + mock        | 页面内上传                      | Rule Builder `:2800` |
-| `run.sh`                     | 实机      | `main.py`       | rtmpose + mhformer | 摄像头                          | 开发 UI `:2800`      |
-| `run-ema.sh`                 | —         | `static/ema.py` | —                  | 页面内上传                      | EMA 演示页 `:28080`  |
+| 脚本                         | 模式      | 入口              | 2D / 3D 分析器     | 数据源                          | 页面                 |
+| ---------------------------- | --------- | ----------------- | ------------------ | ------------------------------- | -------------------- |
+| `run-half-mock-example-1.sh` | half mock | `main.py`         | rtmpose + mhformer | example-1 视频（哈克深蹲）      | 开发 UI `:2800`      |
+| `run-full-mock-example-1.sh` | full mock | `main.py`         | mock + mock        | example-1 视频+骨骼（哈克深蹲） | 开发 UI `:2800`      |
+| `run-rule-builder.sh`        | full mock | `main.py`         | mock + mock        | 页面内上传                      | Rule Builder `:2800` |
+| `run.sh`                     | 实机      | `main.py`         | rtmpose + mhformer | 摄像头                          | 开发 UI `:2800`      |
+| `run-ema.sh`                 | —         | `demo_ema/ema.py` | —                  | 页面内上传                      | EMA 演示页 `:28080`  |
 
 > 目前只有 example-1 配有启动脚本。example-2（高位下拉）的数据仍可用，按 §2.1 的方式直接调用 `main.py` 并指定 `--video-path` / `--mock-kp2d` / `--mock-kp3d` 即可。
 >
@@ -237,7 +250,7 @@ Mock 所用的 3D 骨骼文件路径由启动参数 `--mock-kp3d` 指定。
 | `static/index.html`        | 2800  | Debug/开发者 UI：3D 骨架（Three.js）、统计面板、训练历史、消息日志。支持 `?pose=<名称>` 查询参数预设动作 |
 | `static/rule-builder.html` | 2800  | 规则构建器：视频+骨骼预览、SVG 骨骼选择器、帧级别规则录制、JSON 导出                                     |
 | `static/example.html`      | 28001 | AR 风格 Demo UI（已废弃，由 `example.py` 提供）                                                          |
-| `static/ema.html`          | 28080 | EMA 平滑 + 方向去抖可视化演示（需启动 `static/ema.py`，见 §2.4）                                         |
+| `demo_ema/ema.html`        | 28080 | EMA 平滑 + 方向去抖可视化演示；可上传视频自动推导 3D 骨骼（需启动 `demo_ema/ema.py`，见 §2.4）           |
 
 单条 WebSocket 承载多类消息：
 
@@ -455,9 +468,12 @@ data/rules/                  # 姿态判定规则 JSON 文件
 static/
 ├── index.html               # Debug/开发者 UI
 ├── example.html             # AR 风格 Demo UI（已废弃，已有正式项目）
-├── rule-builder.html        # 规则构建器
+└── rule-builder.html        # 规则构建器
+
+demo_ema/
 ├── ema.html                 # EMA + 去抖可视化演示
 └── ema.py                   # ema.html 的辅助服务（端口 28080）
+
 run-full-mock-example-1.sh   # 全 mock（example-1）
 run-half-mock-example-1.sh   # 预录视频 + 真实分析器（example-1）
 run-rule-builder.sh          # 规则构建工具启动脚本
