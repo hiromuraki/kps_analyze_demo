@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import time
+from pathlib import Path
 import cv2
 import numpy as np
 from core import (
@@ -39,10 +40,19 @@ parser.add_argument(
     "--mock-kp2d", default="./sample_data/example-1/2d_coco17_kps.npz", help="Mock 2D keypoints .npz path"
 )
 parser.add_argument("--mock-kp3d", default="./sample_data/example-1/3d_kps.npz", help="Mock 3D keypoints .npz path")
+parser.add_argument(
+    "--static-dir",
+    default="static",
+    help="Directory served at /static (use ./tools/rule-builder/dist for the Rule Builder)",
+)
 args = parser.parse_args()
 
+static_dir = Path(args.static_dir)
+if not static_dir.is_dir():
+    raise SystemExit(f"Static directory not found: {static_dir}")
+
 app = FastAPI()
-app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
 
 def video_source_factory(camera_id: int | None, video_path: str | None = None) -> IRgbVideoSource:

@@ -1,0 +1,6 @@
+# 扁平 node_modules（跨文件系统 / UNC 环境更稳定）。
+nodeLinker: hoisted
+# pnpm 12 供应链策略：允许使用刚发布的 vue-tsc 版本。
+minimumReleaseAgeExclude:
+  - '@vue/language-core@3.3.14'
+  - vue-tsc@3.3.14

@@ -152,7 +152,7 @@ bash run-ema.sh
 
 ### 2.5. 预设启动脚本
 
-项目根目录提供 `run-*.sh` 便捷脚本，封装常用命令组合。所有脚本均以 `uv sync --frozen` 开头。
+项目根目录提供 `run-*.sh` 便捷脚本，封装常用命令组合（`run-rule-builder.sh` 会先构建 `tools/rule-builder` 前端）。
 
 **命名约定：**
 
@@ -168,6 +168,8 @@ bash run-ema.sh
 | `run-ema.sh`                 | —         | `demo_ema/ema.py` | —                  | 页面内上传                      | EMA 演示页 `:28080`  |
 
 > 目前只有 example-1 配有启动脚本。example-2（高位下拉）的数据仍可用，按 §2.1 的方式直接调用 `main.py` 并指定 `--video-path` / `--mock-kp2d` / `--mock-kp3d` 即可。
+>
+> `run-rule-builder.sh` 会先构建前端（`pnpm build`），再以 `--static-dir ./tools/rule-builder/dist` 启动 `main.py`，详见 §7。
 >
 > 根目录下的 `_deprecated_*.sh` 是已废弃脚本（原 `example.py` / `example.html` 那套 AR Demo UI），保留仅供参考。
 
@@ -245,12 +247,12 @@ Mock 所用的 3D 骨骼文件路径由启动参数 `--mock-kp3d` 指定。
 
 **8. 前端页面**
 
-| 页面                       | 端口  | 用途                                                                                                     |
-| -------------------------- | ----- | -------------------------------------------------------------------------------------------------------- |
-| `static/index.html`        | 2800  | Debug/开发者 UI：3D 骨架（Three.js）、统计面板、训练历史、消息日志。支持 `?pose=<名称>` 查询参数预设动作 |
-| `static/rule-builder.html` | 2800  | 规则构建器：视频+骨骼预览、SVG 骨骼选择器、帧级别规则录制、JSON 导出                                     |
-| `static/example.html`      | 28001 | AR 风格 Demo UI（已废弃，由 `example.py` 提供）                                                          |
-| `demo_ema/ema.html`        | 28080 | EMA 平滑 + 方向去抖可视化演示；可上传视频自动推导 3D 骨骼（需启动 `demo_ema/ema.py`，见 §2.4）           |
+| 页面                                     | 端口  | 用途                                                                                                     |
+| ---------------------------------------- | ----- | -------------------------------------------------------------------------------------------------------- |
+| `static/index.html`                      | 2800  | Debug/开发者 UI：3D 骨架（Three.js）、统计面板、训练历史、消息日志。支持 `?pose=<名称>` 查询参数预设动作 |
+| `tools/rule-builder/dist/index.html`     | 2800  | 规则构建器（Vue + TS 独立前端项目）：视频+骨骼预览、SVG 骨骼选择器、帧级别规则录制、点击规则跳转、JSON 预览/导出 |
+| `static/example.html`                    | 28001 | AR 风格 Demo UI（已废弃，由 `example.py` 提供）                                                          |
+| `demo_ema/ema.html`                      | 28080 | EMA 平滑 + 方向去抖可视化演示；可上传视频自动推导 3D 骨骼（需启动 `demo_ema/ema.py`，见 §2.4）           |
 
 单条 WebSocket 承载多类消息：
 
@@ -467,8 +469,13 @@ sample_data/                 # 测试视频与缓存关键点
 data/rules/                  # 姿态判定规则 JSON 文件
 static/
 ├── index.html               # Debug/开发者 UI
-├── example.html             # AR 风格 Demo UI（已废弃，已有正式项目）
-└── rule-builder.html        # 规则构建器
+└── example.html             # AR 风格 Demo UI（已废弃，已有正式项目）
+
+tools/rule-builder/          # 规则构建器（pnpm + Vue 3 + TypeScript 独立前端项目）
+├── src/                     # 组件、规则/几何逻辑、Three.js 预览
+├── dist/                    # pnpm build 产物，由 main.py --static-dir 托管
+├── package.json
+└── vite.config.ts
 
 demo_ema/
 ├── ema.html                 # EMA + 去抖可视化演示
@@ -484,10 +491,30 @@ _deprecated_*.sh             # 已废弃脚本（AR Demo UI），保留仅供参
 
 ## 7. Rule Builder
 
-可视化规则编辑工具：上传视频 + 2D/3D 骨骼数据，在 SVG 骨骼图上选择测量段，逐帧查看关节角度，录入规则并导出 JSON。
+可视化规则编辑工具（独立前端项目：pnpm + Vue 3 + TypeScript）：上传视频 + 2D/3D 骨骼数据，在 SVG 骨骼图上选择测量段，逐帧查看关节角度，录入规则并导出 JSON。
+
+- **点击规则跳转** —— 在「规则集」中点击任意规则，视频会跳到录制该规则时的帧，并自动恢复当时的骨骼选择（高亮显示）。
+- **预览 JSON** —— 在「元数据」页点击「预览 JSON」，弹窗展示即将导出的完整规则 JSON，可一键复制。
 
 ```bash
 bash run-rule-builder.sh
 ```
 
-浏览器打开 `http://localhost:2800/static/rule-builder.html`。
+启动脚本会先构建 `tools/rule-builder/dist/`，再以 `--static-dir ./tools/rule-builder/dist` 启动 `main.py`。浏览器打开 `http://localhost:2800/`。
+
+前端开发（Vite 热更新，`/api` 代理到 `:2800`）：
+
+```bash
+cd tools/rule-builder
+pnpm install
+pnpm dev
+```
+
+单独构建：
+
+```bash
+cd tools/rule-builder
+pnpm build        # 输出 dist/
+```
+
+> 需要 Node.js >= 20.19（或 >= 22.12）与 pnpm。若 `dist/` 已存在但环境里没有 pnpm，`run-rule-builder.sh` 会直接使用已有产物；设置 `RULE_BUILDER_SKIP_BUILD=1` 可强制跳过构建。
